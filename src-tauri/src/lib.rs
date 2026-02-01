@@ -26,7 +26,7 @@ use backend::{
     database::Database,
     logging,
     migrate::{MigrationEngine, get_audio_duration},
-    transcribe::{TranscriptionEngine, get_transcription_progress as get_transcription_progress_fn},
+    transcribe::{TranscriptionEngine, get_transcription_progress as get_transcription_progress_fn, ensure_ffmpeg_available},
     stats,
     models::{ApiError, MigrationProgress, TranscriptionProgress, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
 };
@@ -450,6 +450,12 @@ async fn transcribe_slices(
         info!("All selected slices are already transcribed, nothing to do");
         return Ok(());
     }
+
+    // Pre-flight: ensure FFmpeg is available before spawning background work
+    ensure_ffmpeg_available().map_err(|e| ApiError {
+        message: e.to_string(),
+        kind: "FfmpegError".to_string(),
+    })?;
 
     // Calculate estimated total time for progress tracking
     let estimated_total_seconds: u32 = filtered_slice_ids.iter()
@@ -1006,6 +1012,12 @@ async fn update_slice_names_from_audio(
     db_guard.as_ref().ok_or_else(|| ApiError {
         message: "Database not initialized".to_string(),
         kind: "DatabaseError".to_string(),
+    })?;
+
+    // Pre-flight: ensure FFmpeg is available before spawning background work
+    ensure_ffmpeg_available().map_err(|e| ApiError {
+        message: e.to_string(),
+        kind: "FfmpegError".to_string(),
     })?;
 
     // Clone the database connection for the background task

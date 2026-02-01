@@ -17,7 +17,7 @@
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 // use rayon::prelude::*; // Disabled for now due to SQLite thread safety
 use chrono::Utc;
 use simple_whisper::{WhisperBuilder, Event};
@@ -180,6 +180,32 @@ pub fn clear_transcription_progress() {
     }
     // Keep the final state for a moment so UI can show completion
     // It will be cleared on the next transcription start
+}
+
+/// Check that FFmpeg is installed and reachable.  The result is cached for
+/// the lifetime of the process so we only spawn `ffmpeg -version` once.
+pub fn ensure_ffmpeg_available() -> Result<()> {
+    static FFMPEG_OK: OnceLock<Result<(), String>> = OnceLock::new();
+
+    let result = FFMPEG_OK.get_or_init(|| {
+        match Command::new("ffmpeg").arg("-version").output() {
+            Ok(output) if output.status.success() => Ok(()),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(format!("FFmpeg returned an error: {}", stderr))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err("FFmpeg is required for audio transcription but was not found. \
+                     Install it with: brew install ffmpeg".to_string())
+            }
+            Err(e) => Err(format!("Failed to run FFmpeg: {}", e)),
+        }
+    });
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(msg) => Err(anyhow::anyhow!("{}", msg)),
+    }
 }
 
 pub struct TranscriptionEngine<'a> {
@@ -502,6 +528,7 @@ impl<'a> TranscriptionEngine<'a> {
 
     /// Convert M4A file to WAV format using ffmpeg
     fn convert_m4a_to_wav(&self, m4a_path: &str) -> Result<String> {
+        ensure_ffmpeg_available()?;
         let m4a_pathbuf = PathBuf::from(m4a_path);
         let wav_path = m4a_pathbuf.with_extension("wav");
         
@@ -563,6 +590,7 @@ impl<'a> TranscriptionEngine<'a> {
 
     /// Extract the first N seconds of audio file and return the path
     fn extract_audio_segment(&self, audio_path: &str, duration_seconds: u32) -> Result<String> {
+        ensure_ffmpeg_available()?;
         let audio_pathbuf = PathBuf::from(audio_path);
         let temp_dir = env::temp_dir();
         let timestamp = chrono::Utc::now().timestamp_millis();

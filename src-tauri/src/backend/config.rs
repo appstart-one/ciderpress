@@ -1,0 +1,170 @@
+// VoiceMemoLiberator - Voice memo transcription and management tool
+// Copyright (C) 2026 APPSTART LLC
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+use anyhow::{Context, Result};
+use dirs::home_dir;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub voice_memo_root: String,
+    pub ciderpress_home: String,
+    pub model_name: String,
+    pub first_run_complete: bool,
+    #[serde(default = "default_skip_already_transcribed")]
+    pub skip_already_transcribed: bool,
+}
+
+fn default_skip_already_transcribed() -> bool {
+    true // Default to skipping already transcribed slices
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        let home = home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+        let default_voice_memo_root = home
+            .join("Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings")
+            .to_string_lossy()
+            .to_string();
+        let ciderpress_home = home.join(".ciderpress").to_string_lossy().to_string();
+
+        Config {
+            voice_memo_root: default_voice_memo_root,
+            ciderpress_home,
+            model_name: "base.en".to_string(),
+            first_run_complete: false,
+            skip_already_transcribed: true,
+        }
+    }
+}
+
+impl Config {
+    pub fn load() -> Result<Config> {
+        let config_path = Self::config_path()?;
+        
+        if !config_path.exists() {
+            let config = Config::default();
+            config.save()?;
+            return Ok(config);
+        }
+
+        let contents = fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
+        
+        let config: Config = toml::from_str(&contents)
+            .with_context(|| "Failed to parse config file")?;
+        
+        Ok(config)
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let config_path = Self::config_path()?;
+        
+        // Ensure parent directory exists
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create config directory: {:?}", parent))?;
+        }
+
+        let contents = toml::to_string_pretty(self)
+            .with_context(|| "Failed to serialize config")?;
+        
+        fs::write(&config_path, contents)
+            .with_context(|| format!("Failed to write config file: {:?}", config_path))?;
+        
+        Ok(())
+    }
+
+    pub fn config_path() -> Result<PathBuf> {
+        let home = home_dir().context("Failed to get home directory")?;
+        Ok(home.join(".ciderpress").join("ciderpress-settings.toml"))
+    }
+
+    pub fn ciderpress_home_path(&self) -> PathBuf {
+        PathBuf::from(&self.ciderpress_home)
+    }
+
+    pub fn voice_memo_root_path(&self) -> PathBuf {
+        PathBuf::from(&self.voice_memo_root)
+    }
+
+    pub fn audio_dir(&self) -> PathBuf {
+        self.ciderpress_home_path().join("audio")
+    }
+
+    pub fn transcript_dir(&self) -> PathBuf {
+        self.ciderpress_home_path().join("transcripts")
+    }
+
+    pub fn logs_dir(&self) -> PathBuf {
+        self.ciderpress_home_path().join("logs")
+    }
+
+    /// Validate that the voice memo root contains the expected files
+    pub fn validate_voice_memo_root(&self) -> Result<()> {
+        let root = self.voice_memo_root_path();
+        
+        if !root.exists() {
+            anyhow::bail!("Voice memo root directory does not exist: {:?}", root);
+        }
+
+        let recordings_db = root.join("CloudRecordings.db");
+        if !recordings_db.exists() {
+            anyhow::bail!("CloudRecordings.db not found in voice memo root: {:?}", root);
+        }
+
+        // Check for at least one .m4a file
+        let has_m4a = fs::read_dir(&root)?
+            .filter_map(|entry| entry.ok())
+            .any(|entry| {
+                entry.path()
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.eq_ignore_ascii_case("m4a"))
+                    .unwrap_or(false)
+            });
+
+        if !has_m4a {
+            anyhow::bail!("No .m4a files found in voice memo root: {:?}", root);
+        }
+
+        Ok(())
+    }
+
+    /// Ensure CiderPress home directory and subdirectories exist
+    pub fn ensure_ciderpress_home(&self) -> Result<()> {
+        let home = self.ciderpress_home_path();
+        let audio_dir = self.audio_dir();
+        let transcript_dir = self.transcript_dir();
+        let logs_dir = self.logs_dir();
+
+        fs::create_dir_all(&home)
+            .with_context(|| format!("Failed to create CiderPress home: {:?}", home))?;
+
+        fs::create_dir_all(&audio_dir)
+            .with_context(|| format!("Failed to create audio directory: {:?}", audio_dir))?;
+
+        fs::create_dir_all(&transcript_dir)
+            .with_context(|| format!("Failed to create transcript directory: {:?}", transcript_dir))?;
+
+        fs::create_dir_all(&logs_dir)
+            .with_context(|| format!("Failed to create logs directory: {:?}", logs_dir))?;
+
+        Ok(())
+    }
+} 

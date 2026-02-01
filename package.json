@@ -1,0 +1,42 @@
+{
+  "name": "ciderpress",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Voice Memo Liberator - CiderPress",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@esbuild/darwin-arm64": "^0.25.5",
+    "@mantine/charts": "^7.13.7",
+    "@mantine/core": "^7.13.7",
+    "@mantine/dates": "^7.13.7",
+    "@mantine/form": "^7.13.7",
+    "@mantine/hooks": "^7.13.7",
+    "@mantine/notifications": "^7.13.7",
+    "@mantine/spotlight": "^7.13.7",
+    "@tabler/icons-react": "^3.26.0",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-log": "^2.8.0",
+    "@types/quill": "^2.0.14",
+    "quill": "^2.0.0-beta.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-quill": "^2.0.0",
+    "react-router-dom": "^6.26.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vitejs/plugin-react": "^4.0.3",
+    "typescript": "^5.0.2",
+    "vite": "^4.4.4"
+  }
+}

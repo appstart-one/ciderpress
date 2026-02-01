@@ -1,0 +1,49 @@
+[package]
+name = "ciderpress"
+version = "0.1.0"
+description = "Voice Memo Liberator - CiderPress"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.78.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "ciderpress_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2", features = [] }
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+num_cpus = "1.16"
+tauri-plugin-log = "2"
+rusqlite = { version = "0.29", features = ["bundled"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+toml = "0.8"
+toml_edit = "0.21"
+dirs = "5.0"
+uuid = { version = "1.0", features = ["v4"] }
+rayon = "1.7"
+tokio = { version = "1.0", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+lazy_static = "1.4"
+walkdir = "2"
+simple-whisper = { version = "0.1.6", features = ["metal"] }
+tokio-stream = "0.1.17"
+ffmpeg-next = "7.1.0"
+regex = "1.10"
+tauri-plugin-shell = "2"
+
+[dev-dependencies]
+tempfile = "3.20.0"

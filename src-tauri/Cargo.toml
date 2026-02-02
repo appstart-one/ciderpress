@@ -41,7 +41,7 @@ lazy_static = "1.4"
 walkdir = "2"
 simple-whisper = { version = "0.1.6", features = ["metal"] }
 tokio-stream = "0.1.17"
-ffmpeg-next = "7.1.0"
+ffmpeg-next = { version = "7.1.0", features = ["build"] }
 regex = "1.10"
 tauri-plugin-shell = "2"
 

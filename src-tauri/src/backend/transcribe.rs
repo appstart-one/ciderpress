@@ -17,12 +17,11 @@
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 // use rayon::prelude::*; // Disabled for now due to SQLite thread safety
 use chrono::Utc;
 use simple_whisper::{WhisperBuilder, Event};
 use tokio_stream::StreamExt;
-use std::process::Command;
 use std::env;
 
 use super::config::Config;
@@ -180,32 +179,6 @@ pub fn clear_transcription_progress() {
     }
     // Keep the final state for a moment so UI can show completion
     // It will be cleared on the next transcription start
-}
-
-/// Check that FFmpeg is installed and reachable.  The result is cached for
-/// the lifetime of the process so we only spawn `ffmpeg -version` once.
-pub fn ensure_ffmpeg_available() -> Result<()> {
-    static FFMPEG_OK: OnceLock<Result<(), String>> = OnceLock::new();
-
-    let result = FFMPEG_OK.get_or_init(|| {
-        match Command::new("ffmpeg").arg("-version").output() {
-            Ok(output) if output.status.success() => Ok(()),
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(format!("FFmpeg returned an error: {}", stderr))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Err("FFmpeg is required for audio transcription but was not found. \
-                     Install it with: brew install ffmpeg".to_string())
-            }
-            Err(e) => Err(format!("Failed to run FFmpeg: {}", e)),
-        }
-    });
-
-    match result {
-        Ok(()) => Ok(()),
-        Err(msg) => Err(anyhow::anyhow!("{}", msg)),
-    }
 }
 
 pub struct TranscriptionEngine<'a> {
@@ -526,38 +499,155 @@ impl<'a> TranscriptionEngine<'a> {
         }
     }
 
-    /// Convert M4A file to WAV format using ffmpeg
+    /// Convert M4A file to WAV format (16 kHz mono PCM S16LE) using ffmpeg-next library
     fn convert_m4a_to_wav(&self, m4a_path: &str) -> Result<String> {
-        ensure_ffmpeg_available()?;
+        use ffmpeg_next::{format, codec, software, util::frame::audio::Audio, ChannelLayout};
+
         let m4a_pathbuf = PathBuf::from(m4a_path);
         let wav_path = m4a_pathbuf.with_extension("wav");
-        
+        let wav_path_str = wav_path.to_str().context("Invalid WAV path")?;
+
         tracing::info!("Converting {} to {}", m4a_path, wav_path.display());
-        
-        // Use ffmpeg to convert M4A to WAV
-        let output = Command::new("ffmpeg")
-            .args([
-                "-i", m4a_path,
-                "-acodec", "pcm_s16le",
-                "-ar", "16000",  // 16kHz sample rate (good for speech recognition)
-                "-ac", "1",      // mono
-                "-y",            // overwrite output file
-                wav_path.to_str().context("Invalid WAV path")?
-            ])
-            .output()
-            .context("Failed to execute ffmpeg command")?;
-        
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("ffmpeg conversion failed: {}", stderr));
+
+        // Open input
+        let mut ictx = format::input(m4a_path)
+            .with_context(|| format!("Failed to open input: {}", m4a_path))?;
+
+        let input_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
+            .context("No audio stream found in input")?;
+        let input_stream_index = input_stream.index();
+        let input_time_base = input_stream.time_base();
+
+        // Create decoder
+        let decoder_context = codec::context::Context::from_parameters(input_stream.parameters())
+            .context("Failed to create decoder context")?;
+        let mut decoder = decoder_context.decoder().audio()
+            .context("Failed to open audio decoder")?;
+
+        let src_rate = decoder.rate();
+        let src_format = decoder.format();
+        let src_channel_layout = if decoder.channel_layout().is_empty() {
+            ChannelLayout::MONO
+        } else {
+            decoder.channel_layout()
+        };
+
+        // Set up resampler: convert to 16kHz mono S16
+        let dst_rate = 16000u32;
+        let dst_format = format::Sample::I16(format::sample::Type::Packed);
+        let dst_channel_layout = ChannelLayout::MONO;
+
+        let mut resampler = software::resampling::Context::get(
+            src_format, src_channel_layout, src_rate,
+            dst_format, dst_channel_layout, dst_rate,
+        ).context("Failed to create resampler")?;
+
+        // Open output
+        let mut octx = format::output(wav_path_str)
+            .with_context(|| format!("Failed to create output: {}", wav_path_str))?;
+
+        let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
+
+        // Add output stream with PCM S16LE encoder
+        let codec = ffmpeg_next::encoder::find(codec::Id::PCM_S16LE)
+            .context("PCM_S16LE encoder not found")?;
+        let mut output_stream = octx.add_stream(codec)
+            .context("Failed to add output stream")?;
+
+        let encoder_context = codec::context::Context::from_parameters(output_stream.parameters())
+            .context("Failed to create encoder context")?;
+
+        let mut encoder = encoder_context.encoder().audio()
+            .context("Failed to open audio encoder")?;
+
+        encoder.set_rate(dst_rate as i32);
+        encoder.set_channel_layout(dst_channel_layout);
+        encoder.set_format(dst_format);
+        encoder.set_time_base((1, dst_rate as i32));
+
+        if global_header {
+            encoder.set_flags(codec::Flags::GLOBAL_HEADER);
         }
-        
+
+        let mut encoder = encoder.open_as(codec)
+            .context("Failed to open PCM encoder")?;
+
+        output_stream.set_parameters(&encoder);
+
+        octx.write_header().context("Failed to write output header")?;
+
+        let output_time_base = octx.stream(0).unwrap().time_base();
+
+        // Decode → resample → encode loop
+        let mut decoded_frame = Audio::empty();
+
+        for (stream, packet) in ictx.packets() {
+            if stream.index() != input_stream_index {
+                continue;
+            }
+            decoder.send_packet(&packet)?;
+            while decoder.receive_frame(&mut decoded_frame).is_ok() {
+                let mut resampled = Audio::empty();
+                resampler.run(&decoded_frame, &mut resampled)?;
+                if resampled.samples() > 0 {
+                    Self::encode_and_write(&mut encoder, &resampled, &mut octx, input_time_base, output_time_base)?;
+                }
+            }
+        }
+
+        // Flush decoder
+        decoder.send_eof()?;
+        while decoder.receive_frame(&mut decoded_frame).is_ok() {
+            let mut resampled = Audio::empty();
+            resampler.run(&decoded_frame, &mut resampled)?;
+            if resampled.samples() > 0 {
+                Self::encode_and_write(&mut encoder, &resampled, &mut octx, input_time_base, output_time_base)?;
+            }
+        }
+
+        // Flush resampler
+        {
+            let mut resampled = Audio::empty();
+            if resampler.flush(&mut resampled).is_ok() && resampled.samples() > 0 {
+                Self::encode_and_write(&mut encoder, &resampled, &mut octx, input_time_base, output_time_base)?;
+            }
+        }
+
+        // Flush encoder
+        encoder.send_eof()?;
+        let mut encoded_packet = ffmpeg_next::Packet::empty();
+        while encoder.receive_packet(&mut encoded_packet).is_ok() {
+            encoded_packet.set_stream(0);
+            encoded_packet.rescale_ts(input_time_base, output_time_base);
+            encoded_packet.write_interleaved(&mut octx)?;
+        }
+
+        octx.write_trailer().context("Failed to write output trailer")?;
+
         if !wav_path.exists() {
             return Err(anyhow::anyhow!("WAV file was not created: {}", wav_path.display()));
         }
-        
+
         tracing::info!("Successfully converted to WAV: {}", wav_path.display());
         Ok(wav_path.to_string_lossy().to_string())
+    }
+
+    /// Helper: encode an audio frame and write to output
+    fn encode_and_write(
+        encoder: &mut ffmpeg_next::encoder::Audio,
+        frame: &ffmpeg_next::util::frame::audio::Audio,
+        octx: &mut ffmpeg_next::format::context::Output,
+        _input_tb: ffmpeg_next::Rational,
+        output_tb: ffmpeg_next::Rational,
+    ) -> Result<()> {
+        encoder.send_frame(frame)?;
+        let mut encoded_packet = ffmpeg_next::Packet::empty();
+        while encoder.receive_packet(&mut encoded_packet).is_ok() {
+            encoded_packet.set_stream(0);
+            encoded_packet.rescale_ts((1, encoder.rate() as i32), output_tb);
+            encoded_packet.write_interleaved(octx)?;
+        }
+        Ok(())
     }
 
     // Async transcription method that works with Tauri's runtime
@@ -588,9 +678,10 @@ impl<'a> TranscriptionEngine<'a> {
         handle.block_on(self.real_transcribe(&transcription_path))
     }
 
-    /// Extract the first N seconds of audio file and return the path
+    /// Extract the first N seconds of audio file and return the path (stream copy, no re-encoding)
     fn extract_audio_segment(&self, audio_path: &str, duration_seconds: u32) -> Result<String> {
-        ensure_ffmpeg_available()?;
+        use ffmpeg_next::format;
+
         let audio_pathbuf = PathBuf::from(audio_path);
         let temp_dir = env::temp_dir();
         let timestamp = chrono::Utc::now().timestamp_millis();
@@ -599,26 +690,55 @@ impl<'a> TranscriptionEngine<'a> {
             timestamp
         );
         let temp_audio_path = temp_dir.join(&temp_filename);
+        let temp_path_str = temp_audio_path.to_str().context("Invalid temp audio path")?;
 
         tracing::info!("Extracting first {} seconds from {} to {}",
                       duration_seconds, audio_path, temp_audio_path.display());
 
-        // Use ffmpeg to extract the first N seconds
-        let output = Command::new("ffmpeg")
-            .args([
-                "-i", audio_path,
-                "-t", &duration_seconds.to_string(),  // Duration
-                "-acodec", "copy",  // Copy codec without re-encoding for speed
-                "-y",  // Overwrite output file
-                temp_audio_path.to_str().context("Invalid temp audio path")?
-            ])
-            .output()
-            .context("Failed to execute ffmpeg command for audio extraction")?;
+        // Open input
+        let mut ictx = format::input(audio_path)
+            .with_context(|| format!("Failed to open input: {}", audio_path))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("ffmpeg extraction failed: {}", stderr));
+        let input_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
+            .context("No audio stream found in input")?;
+        let input_stream_index = input_stream.index();
+        let input_time_base = input_stream.time_base();
+
+        // Calculate the duration threshold in input stream time_base units
+        let duration_limit_ts = (duration_seconds as i64) * input_time_base.1 as i64
+            / input_time_base.0 as i64;
+
+        // Open output
+        let mut octx = format::output(temp_path_str)
+            .with_context(|| format!("Failed to create output: {}", temp_path_str))?;
+
+        {
+            let mut output_stream = octx.add_stream(ffmpeg_next::encoder::find(
+                ictx.stream(input_stream_index).unwrap().parameters().id(),
+            ).context("Encoder not found for stream copy")?)?;
+            output_stream.set_parameters(ictx.stream(input_stream_index).unwrap().parameters());
         }
+
+        let output_time_base = octx.stream(0).unwrap().time_base();
+        octx.write_header().context("Failed to write output header")?;
+
+        // Copy packets up to the duration limit
+        for (stream, mut packet) in ictx.packets() {
+            if stream.index() != input_stream_index {
+                continue;
+            }
+            // Check if PTS exceeds our duration limit
+            if let Some(pts) = packet.pts() {
+                if pts >= duration_limit_ts {
+                    break;
+                }
+            }
+            packet.set_stream(0);
+            packet.rescale_ts(input_time_base, output_time_base);
+            packet.write_interleaved(&mut octx)?;
+        }
+
+        octx.write_trailer().context("Failed to write output trailer")?;
 
         if !temp_audio_path.exists() {
             return Err(anyhow::anyhow!("Temp audio file was not created: {}", temp_audio_path.display()));
@@ -775,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // This test requires ffmpeg and downloads models, so it's ignored by default
+    #[ignore] // This test downloads whisper models, so it's ignored by default
     fn test_m4a_to_wav_transcription_integration() -> Result<()> {
         use tempfile::TempDir;
         

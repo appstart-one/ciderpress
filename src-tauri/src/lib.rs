@@ -26,7 +26,7 @@ use backend::{
     database::Database,
     logging,
     migrate::{MigrationEngine, get_audio_duration},
-    transcribe::{TranscriptionEngine, get_transcription_progress as get_transcription_progress_fn, ensure_ffmpeg_available},
+    transcribe::{TranscriptionEngine, get_transcription_progress as get_transcription_progress_fn},
     stats,
     models::{ApiError, MigrationProgress, TranscriptionProgress, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
 };
@@ -450,12 +450,6 @@ async fn transcribe_slices(
         info!("All selected slices are already transcribed, nothing to do");
         return Ok(());
     }
-
-    // Pre-flight: ensure FFmpeg is available before spawning background work
-    ensure_ffmpeg_available().map_err(|e| ApiError {
-        message: e.to_string(),
-        kind: "FfmpegError".to_string(),
-    })?;
 
     // Calculate estimated total time for progress tracking
     let estimated_total_seconds: u32 = filtered_slice_ids.iter()
@@ -1014,12 +1008,6 @@ async fn update_slice_names_from_audio(
         kind: "DatabaseError".to_string(),
     })?;
 
-    // Pre-flight: ensure FFmpeg is available before spawning background work
-    ensure_ffmpeg_available().map_err(|e| ApiError {
-        message: e.to_string(),
-        kind: "FfmpegError".to_string(),
-    })?;
-
     // Clone the database connection for the background task
     let db_path = config.ciderpress_home_path().join("CiderPress-db.sqlite");
 
@@ -1443,6 +1431,9 @@ pub fn run() {
     if let Err(e) = logging::init_logging(&config) {
         eprintln!("Failed to initialize logging: {}", e);
     }
+
+    // Initialize FFmpeg library (statically linked)
+    ffmpeg_next::init().expect("Failed to initialize FFmpeg library");
 
     // Initialize database
     let db_path = config.ciderpress_home_path().join("CiderPress-db.sqlite");

@@ -466,31 +466,31 @@ fn estimate_transcription_time(file_size_bytes: u64) -> i32 {
     std::cmp::max(1, seconds)
 }
 
-/// Get the duration of an audio file in seconds using ffprobe
+/// Get the duration of an audio file in seconds using ffmpeg-next library API
 pub fn get_audio_duration(audio_path: &Path) -> Option<f64> {
-    use std::process::Command;
-
-    let output = Command::new("ffprobe")
-        .args([
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            audio_path.to_str()?,
-        ])
-        .output();
-
-    match output {
-        Ok(output) if output.status.success() => {
-            let duration_str = String::from_utf8_lossy(&output.stdout);
-            duration_str.trim().parse::<f64>().ok()
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("ffprobe failed for '{}': {}", audio_path.display(), stderr);
-            None
+    let path_str = audio_path.to_str()?;
+    match ffmpeg_next::format::input(path_str) {
+        Ok(ictx) => {
+            let duration = ictx.duration();
+            if duration > 0 {
+                Some(duration as f64 / f64::from(ffmpeg_next::rescale::TIME_BASE))
+            } else {
+                // Fallback: try stream-level duration
+                ictx.streams()
+                    .best(ffmpeg_next::media::Type::Audio)
+                    .and_then(|s| {
+                        let dur = s.duration();
+                        let tb = s.time_base();
+                        if dur > 0 {
+                            Some(dur as f64 * tb.0 as f64 / tb.1 as f64)
+                        } else {
+                            None
+                        }
+                    })
+            }
         }
         Err(e) => {
-            warn!("Failed to run ffprobe for '{}': {}", audio_path.display(), e);
+            warn!("Failed to open '{}' for duration probe: {}", audio_path.display(), e);
             None
         }
     }

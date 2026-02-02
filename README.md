@@ -16,6 +16,7 @@ A desktop application built with Tauri and React that liberates your Apple Voice
 - **Database**: SQLite 3
 - **Build Tool**: Vite
 - **Transcription**: Simple-whisper (placeholder implementation)
+- **Audio Processing**: FFmpeg (statically linked — no external installation required)
 
 ## Project Structure
 
@@ -51,17 +52,12 @@ ciderpress/
 ## Requirements
 
 - macOS 11.0+ (Big Sur or later)
-- [FFmpeg](https://ffmpeg.org/) - Required for audio transcription
-  ```bash
-  brew install ffmpeg
-  ```
 
 ## Development Setup
 
 ### Prerequisites
 
 - macOS 11.0+ (Big Sur or later)
-- [FFmpeg](https://ffmpeg.org/) - Required for audio transcription (`brew install ffmpeg`)
 - Rust 1.78+
 - Node.js 18+
 - npm or pnpm

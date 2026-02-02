@@ -564,11 +564,12 @@ export default function Slices() {
           text: updatedUploads[sliceId]?.text || false,
         };
         successCount++;
-      } catch (error) {
+      } catch (error: unknown) {
+        const msg = typeof error === 'string' ? error : (error as { message?: string })?.message || JSON.stringify(error);
         console.error(`Failed to upload audio for slice ${sliceId}:`, error);
         notifications.show({
           title: 'Upload Error',
-          message: `Failed to upload audio for slice ${sliceId}: ${error}`,
+          message: `Failed to upload audio for slice ${sliceId}: ${msg}`,
           color: 'red',
           icon: <IconX size={16} />,
         });
@@ -635,11 +636,12 @@ export default function Slices() {
           text: true,
         };
         successCount++;
-      } catch (error) {
+      } catch (error: unknown) {
+        const msg = typeof error === 'string' ? error : (error as { message?: string })?.message || JSON.stringify(error);
         console.error(`Failed to upload text for slice ${slice.id}:`, error);
         notifications.show({
           title: 'Upload Error',
-          message: `Failed to upload text for "${slice.title || slice.original_audio_file_name}": ${error}`,
+          message: `Failed to upload text for "${slice.title || slice.original_audio_file_name}": ${msg}`,
           color: 'red',
           icon: <IconX size={16} />,
         });

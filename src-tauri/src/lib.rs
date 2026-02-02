@@ -1434,6 +1434,8 @@ pub fn run() {
 
     // Initialize FFmpeg library (statically linked)
     ffmpeg_next::init().expect("Failed to initialize FFmpeg library");
+    // Suppress FFmpeg's internal diagnostic logging (our code handles errors via Result/Option)
+    ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Fatal);
 
     // Initialize database
     let db_path = config.ciderpress_home_path().join("CiderPress-db.sqlite");

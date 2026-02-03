@@ -15,8 +15,9 @@ A desktop application built with Tauri and React that liberates your Apple Voice
 - **Frontend**: React with TypeScript and Tailwind CSS
 - **Database**: SQLite 3
 - **Build Tool**: Vite
-- **Transcription**: Simple-whisper (placeholder implementation)
+- **Transcription**: OpenAI Whisper via simple-whisper (with Metal GPU acceleration)
 - **Audio Processing**: FFmpeg (statically linked — no external installation required)
+- **NotebookLM Integration**: Optional NLM sidecar binary (bundled)
 
 ## Project Structure
 
@@ -52,15 +53,42 @@ ciderpress/
 ## Requirements
 
 - macOS 11.0+ (Big Sur or later)
+- **Full Disk Access** permission (macOS 12+) to read Apple's Voice Memos database
+- Disk space for Whisper models (downloaded on first use — see table below)
+- A Chromium-based browser (Chrome, Brave, Edge) with a signed-in Google profile — only if using the NotebookLM integration
+
+### What's Bundled (No Installation Required)
+
+| Component | How It's Bundled | Notes |
+|---|---|---|
+| FFmpeg | Statically linked via `ffmpeg-next` | Used for audio duration detection and M4A-to-WAV conversion |
+| SQLite 3 | Statically linked via `rusqlite` | Used for the local recordings and transcripts database |
+| NLM binary | Tauri sidecar | Optional — only used for NotebookLM integration |
+| Metal / CoreAudio | macOS system frameworks | Built-in on all supported macOS versions |
+
+### Whisper Model Sizes
+
+Models are downloaded automatically to `~/.cache/huggingface/` the first time you run a transcription. Choose a model in Settings based on your speed/accuracy needs:
+
+| Model | Disk Size | Best For |
+|---|---|---|
+| tiny / tiny.en | ~43 MB | Fastest, lower accuracy |
+| base / base.en | ~78 MB | Good balance for short memos |
+| small / small.en | ~244 MB | Better accuracy, still fast |
+| medium / medium.en | ~769 MB | High accuracy |
+| large-v3-turbo | ~1.6 GB | Near-best accuracy, optimized speed |
+| large-v3 | ~3.1 GB | Best accuracy, slowest |
 
 ## Development Setup
 
 ### Prerequisites
 
 - macOS 11.0+ (Big Sur or later)
+- Xcode Command Line Tools (`xcode-select --install`)
 - Rust 1.78+
 - Node.js 18+
 - npm or pnpm
+- Go 1.x (only needed to build the NLM sidecar binary via `scripts/build-nlm.sh`)
 
 ### Installation
 
@@ -174,7 +202,6 @@ The Rust backend exposes these Tauri commands:
 5. Submit a pull request
 
 ## License
-## License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
@@ -184,5 +211,5 @@ You are free to use, modify, and distribute this software under the terms of the
 
 - Only copies data; never deletes or edits Apple originals
 - All data stored locally in user's home directory
-- No network calls except optional model downloads
+- No network calls except Whisper model downloads (one-time, on first transcription)
 - Proper file permissions (0o700 for directories, 0o600 for files) 

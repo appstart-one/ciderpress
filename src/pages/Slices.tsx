@@ -42,7 +42,7 @@ import {
   Popover
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload } from '@tabler/icons-react';
+import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb } from '@tabler/icons-react';
 import { QuillEditor } from '../components/QuillEditor';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { DraggableCard } from '../components/DraggableCard';
@@ -523,6 +523,27 @@ export default function Slices() {
       notifications.show({
         title: 'Export Error',
         message: errorMessage,
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
+  const openSuggestFeature = async () => {
+    try {
+      const systemInfo = await invoke<{ app_version: string; macos_version: string }>('get_system_info');
+      const body = `## Feature Request\n\n**Describe the feature you'd like:**\n\n\n**Why would this be useful?**\n\n\n---\n_App Version: ${systemInfo.app_version}_\n_macOS Version: ${systemInfo.macos_version}_`;
+      const params = new URLSearchParams({
+        title: '',
+        body: body,
+        labels: 'enhancement',
+      });
+      await invoke('open_url', { url: `https://github.com/appstart-one/ciderpress/issues/new?${params.toString()}` });
+    } catch (error) {
+      console.error('Failed to open feature request:', error);
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to open feature request page',
         color: 'red',
         icon: <IconX size={16} />,
       });
@@ -1149,54 +1170,63 @@ export default function Slices() {
                 Sorted by {getSortFieldDisplayName(sortField)} ({sortDirection})
               </Text>
             </Group>
-            {selectedSlices.length > 0 && (
-              <Group>
-                <Button
-                  variant="outline"
-                  leftSection={<IconPencil size={16} />}
-                  onClick={updateSliceNames}
-                >
-                  Update Slice Names
-                </Button>
-                <Button
-                  variant="outline"
-                  leftSection={<IconFileText size={16} />}
-                  onClick={transcribeSelected}
-                >
-                  Transcribe Selected
-                </Button>
-                <Button
-                  variant="outline"
-                  color="teal"
-                  leftSection={<IconDownload size={16} />}
-                  onClick={exportTranscribedText}
-                >
-                  Export Text
-                </Button>
-                <Button
-                  variant="outline"
-                  color="violet"
-                  leftSection={<IconUpload size={16} />}
-                  onClick={uploadAudioToNlm}
-                  loading={nlmUploading}
-                  disabled={!getSelectedNotebook()}
-                  title={!getSelectedNotebook() ? 'Select a notebook on the NotebookLM page first' : 'Upload audio to NotebookLM'}
-                >
-                  NLM Audio
-                </Button>
-                <Button
-                  variant="outline"
-                  color="violet"
-                  leftSection={<IconNotebook size={16} />}
-                  onClick={uploadTextToNlm}
-                  loading={nlmUploading}
-                  disabled={!getSelectedNotebook()}
-                  title={!getSelectedNotebook() ? 'Select a notebook on the NotebookLM page first' : 'Upload text to NotebookLM'}
-                >
-                  NLM Text
-                </Button>
-              </Group>
-            )}
+            <Group>
+              <Button
+                variant="outline"
+                leftSection={<IconPencil size={16} />}
+                onClick={updateSliceNames}
+                disabled={selectedSlices.length === 0}
+              >
+                Update Slice Names
+              </Button>
+              <Button
+                variant="outline"
+                leftSection={<IconFileText size={16} />}
+                onClick={transcribeSelected}
+                disabled={selectedSlices.length === 0}
+              >
+                Transcribe Selected
+              </Button>
+              <Button
+                variant="outline"
+                color="teal"
+                leftSection={<IconDownload size={16} />}
+                onClick={exportTranscribedText}
+                disabled={selectedSlices.length === 0}
+              >
+                Export Text
+              </Button>
+              <Button
+                variant="outline"
+                color="violet"
+                leftSection={<IconUpload size={16} />}
+                onClick={uploadAudioToNlm}
+                loading={nlmUploading}
+                disabled={selectedSlices.length === 0 || !getSelectedNotebook()}
+                title={!getSelectedNotebook() ? 'Select a notebook on the NotebookLM page first' : 'Upload audio to NotebookLM'}
+              >
+                NLM Audio
+              </Button>
+              <Button
+                variant="outline"
+                color="violet"
+                leftSection={<IconNotebook size={16} />}
+                onClick={uploadTextToNlm}
+                loading={nlmUploading}
+                disabled={selectedSlices.length === 0 || !getSelectedNotebook()}
+                title={!getSelectedNotebook() ? 'Select a notebook on the NotebookLM page first' : 'Upload text to NotebookLM'}
+              >
+                NLM Text
+              </Button>
+              <Button
+                variant="outline"
+                color="gray"
+                leftSection={<IconBulb size={16} />}
+                onClick={openSuggestFeature}
+              >
+                Suggest Feature
+              </Button>
+            </Group>
           </Group>
         </Paper>
 

@@ -1416,6 +1416,34 @@ async fn log_user_action(request: LogUserActionRequest) -> Result<(), ApiError> 
     Ok(())
 }
 
+#[tauri::command]
+async fn get_system_info() -> Result<serde_json::Value, ApiError> {
+    let app_version = env!("CARGO_PKG_VERSION").to_string();
+
+    let macos_version = std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    Ok(serde_json::json!({
+        "app_version": app_version,
+        "macos_version": macos_version
+    }))
+}
+
+#[tauri::command]
+async fn open_url(url: String) -> Result<(), ApiError> {
+    std::process::Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| ApiError {
+            message: format!("Failed to open URL: {}", e),
+            kind: "IoError".to_string(),
+        })?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Load initial config
@@ -1501,7 +1529,9 @@ pub fn run() {
             nlm_list_profiles,
             nlm_auth_with_profile,
             nlm_create_notebook,
-            nlm_get_notebook_details
+            nlm_get_notebook_details,
+            get_system_info,
+            open_url
         ])
         .setup(|app| {
             // Initialize global app handle for event emission

@@ -98,12 +98,14 @@ pub fn init_transcription_progress_with_logging(
 }
 
 /// Start tracking a new slice being transcribed
-pub fn start_current_slice(slice_id: i64, slice_name: String, file_size: i64, bytes_per_second_rate: f64) {
-    // Calculate estimated time for this slice
-    let estimated_seconds = if bytes_per_second_rate > 0.0 {
-        (file_size as f64 / bytes_per_second_rate).ceil() as u32
+pub fn start_current_slice(slice_id: i64, slice_name: String, file_size: i64, audio_duration_seconds: Option<f64>) {
+    // Calculate estimated time: 35 seconds of processing per 10 minutes of audio
+    let estimated_seconds = if let Some(duration) = audio_duration_seconds {
+        std::cmp::max(1, (duration / 600.0 * 35.0).ceil() as u32)
     } else {
-        30 // Default to 30 seconds if no rate available
+        // Fallback: rough estimate from file size (~1MB per minute of audio)
+        let audio_minutes = file_size as f64 / 1_048_576.0;
+        std::cmp::max(1, (audio_minutes / 10.0 * 35.0).ceil() as u32)
     };
 
     let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
@@ -335,17 +337,12 @@ impl<'a> TranscriptionEngine<'a> {
 
         tracing::info!("Starting transcription of slice {} ({})", slice_id, slice.original_audio_file_name);
 
-        // Get the bytes_per_second_rate from current progress state
-        let bytes_per_second_rate = get_transcription_progress()
-            .map(|p| p.bytes_per_second_rate)
-            .unwrap_or(34000.0);
-
-        // Start tracking this slice with its file size for progress calculation
+        // Start tracking this slice with its audio duration for progress calculation
         start_current_slice(
             slice_id,
             slice.original_audio_file_name.clone(),
             slice.audio_file_size,
-            bytes_per_second_rate,
+            slice.audio_time_length_seconds,
         );
 
         // Perform transcription using the blocking version

@@ -35,7 +35,7 @@ import {
   Transition,
   ThemeIcon
 } from '@mantine/core';
-import { IconCheck, IconX, IconInfoCircle, IconDownload } from '@tabler/icons-react';
+import { IconCheck, IconX, IconInfoCircle, IconDownload, IconShieldLock } from '@tabler/icons-react';
 import { DraggableCard } from '../components/DraggableCard';
 
 interface ModelDownloadProgress {
@@ -335,16 +335,34 @@ export default function Settings() {
           <Stack gap="md">
             <Title order={3}>Status</Title>
             <Group>
-              <div style={{ 
-                width: 12, 
-                height: 12, 
-                borderRadius: '50%', 
-                backgroundColor: isValid ? '#10b981' : '#ef4444' 
+              <div style={{
+                width: 12,
+                height: 12,
+                borderRadius: '50%',
+                backgroundColor: isValid ? '#10b981' : '#ef4444'
               }} />
               <Text size="sm" c={isValid ? 'green' : 'red'}>
                 {isValid ? 'Apple DB connection successful' : 'Cannot connect to Apple DB'}
               </Text>
             </Group>
+            {!isValid && !loading && (
+              <Alert icon={<IconShieldLock size={16} />} title="Cannot Access Voice Memos" color="red" variant="light">
+                <Stack gap="xs">
+                  <Text size="sm">
+                    CiderPress cannot read the Apple Voice Memos directory. This is usually caused by one of two things:
+                  </Text>
+                  <Text size="sm" fw={600}>Option 1: Grant Full Disk Access (recommended)</Text>
+                  <Text size="sm">
+                    Open <b>System Settings &rarr; Privacy &amp; Security &rarr; Full Disk Access</b> and enable CiderPress.
+                    Then restart the app.
+                  </Text>
+                  <Text size="sm" fw={600}>Option 2: Copy files manually</Text>
+                  <Text size="sm">
+                    Copy your Voice Memos from <code>~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings/</code> to a folder you can access, then update the <b>Voice Memo Root Directory</b> path above to point there.
+                  </Text>
+                </Stack>
+              </Alert>
+            )}
           </Stack>
         </Paper>
 

@@ -434,7 +434,7 @@ impl<'a> MigrationEngine<'a> {
                     transcribed: false,
                     audio_file_size: size as i64,
                     audio_file_type: file_type,
-                    estimated_time_to_transcribe: estimate_transcription_time(size),
+                    estimated_time_to_transcribe: estimate_transcription_time(size, audio_duration),
                     audio_time_length_seconds: audio_duration,
                     transcription: None,
                     transcription_time_taken: None,
@@ -456,13 +456,16 @@ impl<'a> MigrationEngine<'a> {
     }
 }
 
-fn estimate_transcription_time(file_size_bytes: u64) -> i32 {
-    // Very rough heuristic: ~1 minute of audio is ~1MB for .m4a
-    // Transcription is often faster than real-time. Let's say 1/2 of audio duration.
-    // So, (size_in_mb * 60) / 2 = size_in_mb * 30
-    // (size_in_bytes / 1_000_000) * 30
-    let seconds = (file_size_bytes as f64 / 1_048_576.0 * 30.0).round() as i32;
-    // return at least 1 second
+fn estimate_transcription_time(file_size_bytes: u64, audio_duration_seconds: Option<f64>) -> i32 {
+    // If audio duration is known, use 35 seconds of processing per 10 minutes of audio
+    if let Some(duration) = audio_duration_seconds {
+        let seconds = (duration / 600.0 * 35.0).ceil() as i32;
+        return std::cmp::max(1, seconds);
+    }
+    // Fallback when duration is unknown: rough heuristic based on file size
+    // ~1 minute of audio is ~1MB for .m4a, processing at ~35s per 10min
+    let audio_minutes = file_size_bytes as f64 / 1_048_576.0;
+    let seconds = (audio_minutes / 10.0 * 35.0).round() as i32;
     std::cmp::max(1, seconds)
 }
 
@@ -508,9 +511,16 @@ mod tests {
 
     #[test]
     fn test_estimate_transcription_time() {
-        assert_eq!(super::estimate_transcription_time(10_000), 1); // small files
-        assert_eq!(super::estimate_transcription_time(1_048_576), 30); // 1MB -> 30s
-        assert_eq!(super::estimate_transcription_time(50_000_000), 1431); // 50MB
+        // With audio duration: 35s per 10 minutes (600s) of audio
+        assert_eq!(super::estimate_transcription_time(10_000, Some(600.0)), 35); // 10 min -> 35s
+        assert_eq!(super::estimate_transcription_time(10_000, Some(60.0)), 4); // 1 min -> ceil(3.5) = 4s
+        assert_eq!(super::estimate_transcription_time(10_000, Some(6000.0)), 350); // 100 min -> 350s
+        assert_eq!(super::estimate_transcription_time(10_000, Some(5.0)), 1); // tiny -> at least 1s
+
+        // Without audio duration: fallback to file size heuristic
+        assert_eq!(super::estimate_transcription_time(10_000, None), 1); // small files
+        assert_eq!(super::estimate_transcription_time(1_048_576, None), 4); // 1MB (~1min audio) -> ceil(0.1*35)=4s
+        assert_eq!(super::estimate_transcription_time(50_000_000, None), 167); // ~50min audio -> ~167s
     }
 
     #[test]

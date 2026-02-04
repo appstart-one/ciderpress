@@ -54,6 +54,9 @@ impl<'a> MigrationEngine<'a> {
     }
 
     pub fn start_migration(&self) -> Result<()> {
+        // Brief pause so the migration log window can finish loading and register its event listener
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
         log_migration("Starting migration process", "info");
 
         // Reset progress
@@ -175,8 +178,8 @@ impl<'a> MigrationEngine<'a> {
         log_migration(&format!("Found {} .m4a files to process", m4a_files.len()), "success");
 
         if m4a_files.is_empty() {
-            log_migration("No .m4a files found. Migration complete.", "info");
-            self.update_progress("No audio files found. Migration complete.", Some(0), Some(0))?;
+            log_migration("No files to migrate. All files have already been migrated.", "success");
+            self.update_progress("No files to migrate.", Some(0), Some(0))?;
             *MIGRATION_PROGRESS.lock().unwrap() = None;
             return Ok(());
         }
@@ -288,14 +291,23 @@ impl<'a> MigrationEngine<'a> {
         // Final summary
         log_migration("", "info");
         log_migration("=== MIGRATION SUMMARY ===", "info");
-        log_migration(&format!("Files copied: {}", summary.copied), "success");
-        if summary.skipped > 0 {
-            log_migration(&format!("Files skipped (already migrated): {}", summary.skipped), "warn");
+
+        if summary.copied == 0 && summary.errors == 0 {
+            // All files were already migrated
+            log_migration("No files to migrate. All files have already been migrated.", "success");
+            log_migration(&format!("Files already in database: {}", summary.skipped), "info");
+        } else {
+            if summary.copied > 0 {
+                log_migration(&format!("Files copied: {}", summary.copied), "success");
+            }
+            if summary.skipped > 0 {
+                log_migration(&format!("Files skipped (already migrated): {}", summary.skipped), "warn");
+            }
+            if summary.errors > 0 {
+                log_migration(&format!("Files with errors: {}", summary.errors), "error");
+            }
+            log_migration(&format!("Total size processed: {}", format_file_size(summary.total_size_bytes)), "info");
         }
-        if summary.errors > 0 {
-            log_migration(&format!("Files with errors: {}", summary.errors), "error");
-        }
-        log_migration(&format!("Total size processed: {}", format_file_size(summary.total_size_bytes)), "info");
 
         if summary.errors == 0 {
             log_migration("", "info");

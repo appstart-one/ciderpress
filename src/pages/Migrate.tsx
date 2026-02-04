@@ -14,8 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { notifications } from '@mantine/notifications';
 import {
   Container,
@@ -31,7 +32,8 @@ import {
   SimpleGrid,
   Card,
   Badge,
-  Loader
+  Loader,
+  ScrollArea
 } from '@mantine/core';
 import { IconDownload, IconCheck, IconX, IconInfoCircle, IconDatabase, IconFolder, IconCalendar, IconFile, IconFileText } from '@tabler/icons-react';
 
@@ -56,17 +58,50 @@ interface PreMigrationStats {
   not_transcribed_count: number;
 }
 
+interface LogEntry {
+  timestamp: string;
+  message: string;
+  level: string;
+}
+
+const LOG_LEVEL_COLORS: Record<string, string> = {
+  info: '#7c3aed',
+  warn: '#f59e0b',
+  error: '#ef4444',
+  success: '#10b981',
+};
+
 export default function Migrate() {
   const [isRunning, setIsRunning] = useState(false);
   const [stats, setStats] = useState<MigrationProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preStats, setPreStats] = useState<PreMigrationStats | null>(null);
   const [loadingPreStats, setLoadingPreStats] = useState(true);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const logViewport = useRef<HTMLDivElement>(null);
 
   // Load pre-migration stats on mount
   useEffect(() => {
     loadPreMigrationStats();
   }, []);
+
+  // Listen for migration-log events
+  useEffect(() => {
+    const unlisten = listen<LogEntry>('migration-log', (event) => {
+      setLogEntries((prev) => [...prev, event.payload]);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  // Auto-scroll log to bottom when new entries arrive
+  useEffect(() => {
+    if (logViewport.current) {
+      logViewport.current.scrollTop = logViewport.current.scrollHeight;
+    }
+  }, [logEntries]);
 
   const loadPreMigrationStats = async () => {
     setLoadingPreStats(true);
@@ -89,34 +124,21 @@ export default function Migrate() {
   };
 
   const startMigration = async () => {
-    console.log("Starting migration...");
     setIsRunning(true);
     setError(null);
     setStats(null);
+    setLogEntries([]);
 
     try {
-      // Open the migration log window
-      console.log("Opening migration log window...");
-      try {
-        await invoke('open_migration_log_window');
-        console.log("Migration log window opened successfully");
-      } catch (logError) {
-        console.warn("Failed to open log window:", logError);
-        // Continue with migration even if log window fails
-      }
-      
       // Start the migration process
-      console.log("Invoking start_migration command...");
       await invoke('start_migration');
-      console.log("start_migration command completed successfully");
-      
+
       // Poll for progress updates
       const interval = setInterval(async () => {
         try {
           const currentStats = await invoke<MigrationProgress | null>('get_migration_stats');
-          console.log("Migration stats:", currentStats);
           setStats(currentStats);
-          
+
           // Check if migration is complete (when currentStats is null, migration is done)
           if (!currentStats || (currentStats.processed_recordings + currentStats.failed_recordings >= currentStats.total_recordings)) {
             clearInterval(interval);
@@ -182,7 +204,7 @@ export default function Migrate() {
     <Container size="md">
       <Stack gap="lg">
         <Title order={2}>Migrate Voice Memos</Title>
-        
+
         <Alert icon={<IconInfoCircle size={16} />} title="Migration Process" color="blue">
           This will copy all your Apple Voice Memos to the CiderPress database, preserving metadata and preparing them for transcription.
         </Alert>
@@ -299,15 +321,15 @@ export default function Migrate() {
                 <IconDatabase size={24} />
               </ThemeIcon>
               <div>
-                <Title order={3}>Apple Voice Memos → CiderPress</Title>
+                <Title order={3}>Apple Voice Memos &rarr; CiderPress</Title>
                 <Text size="sm" c="dimmed">
                   Migrate recordings from Apple's database to your local CiderPress database
                 </Text>
               </div>
             </Group>
 
-            {!isRunning && !stats && (
-              <Button 
+            {!isRunning && !stats && logEntries.length === 0 && (
+              <Button
                 onClick={startMigration}
                 leftSection={<IconDownload size={16} />}
                 size="lg"
@@ -320,20 +342,20 @@ export default function Migrate() {
             {isRunning && (
               <Stack gap="md">
                 <Text fw={500}>Migration in Progress...</Text>
-                
+
                 {stats && (
                   <>
                     <Text size="sm" c="blue" fw={500}>
                       {stats.current_step}
                     </Text>
-                    
-                    <Progress 
-                      value={getProgressPercentage()} 
+
+                    <Progress
+                      value={getProgressPercentage()}
                       size="lg"
                       striped
                       animated
                     />
-                    
+
                     <Group justify="space-between">
                       <Text size="sm">
                         Progress: {stats.processed_recordings + stats.failed_recordings} / {stats.total_recordings}
@@ -367,7 +389,7 @@ export default function Migrate() {
                         </ThemeIcon>
                         <Text size="sm">Success: {stats.processed_recordings}</Text>
                       </Group>
-                      
+
                       {stats.failed_recordings > 0 && (
                         <Group gap="xs">
                           <ThemeIcon size="sm" color="red" variant="light">
@@ -384,9 +406,9 @@ export default function Migrate() {
 
             {!isRunning && stats && (
               <Stack gap="md">
-                <Alert 
-                  icon={<IconCheck size={16} />} 
-                  title="Migration Complete" 
+                <Alert
+                  icon={<IconCheck size={16} />}
+                  title="Migration Complete"
                   color={stats.failed_recordings === 0 ? "green" : "yellow"}
                 >
                   Successfully processed {stats.processed_recordings} out of {stats.total_recordings} recordings
@@ -394,8 +416,8 @@ export default function Migrate() {
                   {stats.failed_recordings > 0 && ` ${stats.failed_recordings} recordings failed to migrate.`}
                 </Alert>
 
-                <Button 
-                  onClick={() => {setStats(null); setError(null);}}
+                <Button
+                  onClick={() => {setStats(null); setError(null); setLogEntries([]);}}
                   variant="outline"
                   fullWidth
                 >
@@ -407,11 +429,11 @@ export default function Migrate() {
             {error && (
               <Alert icon={<IconX size={16} />} title="Migration Error" color="red">
                 {error}
-                <Button 
-                  variant="outline" 
-                  size="xs" 
+                <Button
+                  variant="outline"
+                  size="xs"
                   mt="sm"
-                  onClick={() => {setError(null); setStats(null);}}
+                  onClick={() => {setError(null); setStats(null); setLogEntries([]);}}
                 >
                   Try Again
                 </Button>
@@ -419,6 +441,32 @@ export default function Migrate() {
             )}
           </Stack>
         </Paper>
+
+        {/* Inline Migration Log */}
+        {logEntries.length > 0 && (
+          <Paper p="lg" withBorder>
+            <Stack gap="md">
+              <Title order={4}>Migration Log</Title>
+              <ScrollArea h={350} viewportRef={logViewport} style={{ borderRadius: 8 }}>
+                <div style={{
+                  backgroundColor: 'var(--mantine-color-dark-8, #0d1117)',
+                  padding: 12,
+                  borderRadius: 8,
+                  fontFamily: "'Courier New', monospace",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}>
+                  {logEntries.map((entry, i) => (
+                    <div key={i} style={{ color: LOG_LEVEL_COLORS[entry.level] || '#e0e0e0', marginBottom: 2 }}>
+                      <span style={{ color: '#6b7280', marginRight: 8 }}>[{entry.timestamp}]</span>
+                      {entry.message}
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </Stack>
+          </Paper>
+        )}
 
         <Paper p="lg" withBorder>
           <Stack gap="md">
@@ -437,4 +485,4 @@ export default function Migrate() {
       </Stack>
     </Container>
   );
-} 
+}

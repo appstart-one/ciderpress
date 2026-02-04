@@ -54,9 +54,6 @@ impl<'a> MigrationEngine<'a> {
     }
 
     pub fn start_migration(&self) -> Result<()> {
-        // Brief pause so the migration log window can finish loading and register its event listener
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
         log_migration("Starting migration process", "info");
 
         // Reset progress

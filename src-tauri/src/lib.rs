@@ -271,24 +271,6 @@ async fn get_pre_migration_stats(
 }
 
 #[tauri::command]
-async fn open_migration_log_window(app: tauri::AppHandle) -> Result<(), ApiError> {
-    let _window = tauri::WebviewWindowBuilder::new(
-        &app,
-        "migration-log",
-        tauri::WebviewUrl::App("migration-log.html".into()),
-    )
-    .title("Migration Log")
-    .inner_size(800.0, 600.0)
-    .build()
-    .map_err(|e| ApiError {
-        message: format!("Failed to create log window: {}", e),
-        kind: "WindowError".to_string(),
-    })?;
-
-    Ok(())
-}
-
-#[tauri::command]
 async fn clear_database(state: State<'_, AppState>) -> Result<(), ApiError> {
     let db_guard = state.db.lock().map_err(|e| ApiError {
         message: format!("Failed to lock database: {}", e),
@@ -1492,7 +1474,6 @@ pub fn run() {
             start_migration,
             get_migration_stats,
             get_pre_migration_stats,
-            open_migration_log_window,
             clear_database,
             get_slice_records,
             get_stats,

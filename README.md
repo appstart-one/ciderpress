@@ -1,5 +1,7 @@
 # CiderPress - Voice Memo Liberator
 
+> **New user?** See the [Quick Start Guide](QUICKSTART.md) to get up and running.
+
 A desktop application built with Tauri and React that liberates your Apple Voice Memos by copying them to a local database, enabling transcription, search, and export capabilities.
 
 ## Features

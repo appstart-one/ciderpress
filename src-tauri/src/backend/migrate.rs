@@ -245,7 +245,6 @@ impl<'a> MigrationEngine<'a> {
             match self.process_m4a_file(&m4a_file, &db) {
                 Ok(ProcessResult::Copied(size)) => {
                     summary.copied += 1;
-                    log_migration(&format!("Copied: {} ({} bytes)", filename, size), "success");
 
                     // Log to JSON log
                     logging::log_migration_file(filename, "copied", Some(size), None);
@@ -258,7 +257,7 @@ impl<'a> MigrationEngine<'a> {
                 }
                 Ok(ProcessResult::Skipped) => {
                     summary.skipped += 1;
-                    log_migration(&format!("Skipped (already exists): {}", filename), "warn");
+                    log_migration(&format!("  Skipped (already migrated): {}", filename), "warn");
 
                     // Log to JSON log
                     logging::log_migration_file(filename, "skipped", None, None);
@@ -269,7 +268,7 @@ impl<'a> MigrationEngine<'a> {
                     }
                 }
                 Err(e) => {
-                    log_migration(&format!("Error processing {}: {}", filename, e), "error");
+                    log_migration(&format!("  Error: {} - {}", filename, e), "error");
                     summary.errors += 1;
 
                     // Log to JSON log
@@ -287,6 +286,7 @@ impl<'a> MigrationEngine<'a> {
         self.update_progress("Migration completed!", None, None)?;
 
         // Final summary
+        log_migration("", "info");
         log_migration("=== MIGRATION SUMMARY ===", "info");
         log_migration(&format!("Files copied: {}", summary.copied), "success");
         if summary.skipped > 0 {
@@ -295,8 +295,15 @@ impl<'a> MigrationEngine<'a> {
         if summary.errors > 0 {
             log_migration(&format!("Files with errors: {}", summary.errors), "error");
         }
-        log_migration(&format!("Total size processed: {:.1}MB", summary.total_size_bytes as f64 / 1024.0 / 1024.0), "info");
-        log_migration("Migration completed successfully!", "success");
+        log_migration(&format!("Total size processed: {}", format_file_size(summary.total_size_bytes)), "info");
+
+        if summary.errors == 0 {
+            log_migration("", "info");
+            log_migration("SUCCESS - Migration completed with no errors.", "success");
+        } else {
+            log_migration("", "info");
+            log_migration(&format!("Migration completed with {} error(s). Review the log above for details.", summary.errors), "warn");
+        }
 
         // Log migration complete to JSON log
         logging::log_migration_complete(
@@ -405,7 +412,7 @@ impl<'a> MigrationEngine<'a> {
         match fs::copy(m4a_file_path, &dest_path) {
             Ok(size) => {
                 info!("✅ SUCCESSFULLY COPIED FILE: {} ({} bytes)", filename, size);
-                
+
                 // Verify the file actually exists at destination
                 if dest_path.exists() {
                     let actual_size = fs::metadata(&dest_path)?.len();
@@ -414,7 +421,7 @@ impl<'a> MigrationEngine<'a> {
                     error!("❌ CRITICAL: File copy reported success but file not found at destination!");
                     return Err(anyhow::anyhow!("File copy verification failed"));
                 }
-                
+
                 // 4. Create and insert a slice record
                 let file_type = m4a_file_path.extension()
                     .and_then(|s| s.to_str())
@@ -433,7 +440,7 @@ impl<'a> MigrationEngine<'a> {
                     title: None,
                     transcribed: false,
                     audio_file_size: size as i64,
-                    audio_file_type: file_type,
+                    audio_file_type: file_type.clone(),
                     estimated_time_to_transcribe: estimate_transcription_time(size, audio_duration),
                     audio_time_length_seconds: audio_duration,
                     transcription: None,
@@ -445,6 +452,18 @@ impl<'a> MigrationEngine<'a> {
 
                 db.insert_slice(&slice)?;
                 info!(slice = ?&slice, "Inserted slice record");
+
+                // Log file details and metadata to the migration log window
+                log_migration(&format!("  Copied: {} ({})", filename, format_file_size(size)), "success");
+                let mut meta_parts: Vec<String> = Vec::new();
+                meta_parts.push(format!("type: {}", file_type));
+                if let Some(duration) = audio_duration {
+                    meta_parts.push(format!("duration: {}", format_audio_duration(duration)));
+                }
+                if let Some(date) = recording_date {
+                    meta_parts.push(format!("recorded: {}", format_recording_date(date)));
+                }
+                log_migration(&format!("  Metadata: {}", meta_parts.join(", ")), "info");
 
                 Ok(ProcessResult::Copied(size))
             },
@@ -467,6 +486,38 @@ fn estimate_transcription_time(file_size_bytes: u64, audio_duration_seconds: Opt
     let audio_minutes = file_size_bytes as f64 / 1_048_576.0;
     let seconds = (audio_minutes / 10.0 * 35.0).round() as i32;
     std::cmp::max(1, seconds)
+}
+
+fn format_file_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1_048_576 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1_073_741_824 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else {
+        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+    }
+}
+
+fn format_audio_duration(seconds: f64) -> String {
+    let total = seconds.round() as u64;
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if h > 0 {
+        format!("{}h {}m {}s", h, m, s)
+    } else if m > 0 {
+        format!("{}m {}s", m, s)
+    } else {
+        format!("{}s", s)
+    }
+}
+
+fn format_recording_date(unix_timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(unix_timestamp, 0)
+        .map(|dt| dt.format("%b %d, %Y").to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Get the duration of an audio file in seconds using ffmpeg-next library API

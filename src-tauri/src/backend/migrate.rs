@@ -536,7 +536,7 @@ pub fn get_audio_duration(audio_path: &Path) -> Option<f64> {
         Ok(ictx) => {
             let duration = ictx.duration();
             if duration > 0 {
-                Some(duration as f64 / f64::from(ffmpeg_next::rescale::TIME_BASE))
+                Some(duration as f64 * f64::from(ffmpeg_next::rescale::TIME_BASE))
             } else {
                 // Fallback: try stream-level duration
                 ictx.streams()

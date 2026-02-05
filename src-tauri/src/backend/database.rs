@@ -749,6 +749,16 @@ impl Database {
         Ok(())
     }
 
+    /// Clear audio durations that are obviously corrupted (> 24 hours).
+    /// These were caused by a unit conversion bug in get_audio_duration.
+    pub fn clear_corrupt_audio_durations(&self) -> Result<u32> {
+        let rows_affected = self.conn.execute(
+            "UPDATE slices SET audio_time_length_seconds = NULL WHERE audio_time_length_seconds > 86400",
+            [],
+        )?;
+        Ok(rows_affected as u32)
+    }
+
     pub fn get_slices_without_duration(&self) -> Result<Vec<Slice>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, original_audio_file_name, title, transcribed, audio_file_size, audio_file_type,

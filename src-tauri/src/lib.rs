@@ -1078,6 +1078,17 @@ async fn populate_audio_durations(state: State<'_, AppState>) -> Result<u32, Api
         kind: "DatabaseError".to_string(),
     })?;
 
+    // Clear any corrupted durations from a prior unit-conversion bug
+    match db.clear_corrupt_audio_durations() {
+        Ok(cleared) if cleared > 0 => {
+            info!("Cleared {} corrupted audio durations for recalculation", cleared);
+        }
+        Err(e) => {
+            error!("Failed to clear corrupt audio durations: {}", e);
+        }
+        _ => {}
+    }
+
     // Get slices without duration
     let slices_without_duration = db.get_slices_without_duration().map_err(ApiError::from)?;
     let mut updated_count = 0u32;

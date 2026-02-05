@@ -87,14 +87,30 @@ export default function Slices() {
   const [slices, setSlices] = useState<Slice[]>([]);
   const [filteredSlices, setFilteredSlices] = useState<Slice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedSlices, setSelectedSlices] = useState<number[]>([]);
+  // Restore view state from localStorage to survive route changes
+  const [searchTerm, setSearchTerm] = useState(() => {
+    try { return localStorage.getItem('slices_search') || ''; } catch { return ''; }
+  });
+  const [selectedSlices, setSelectedSlices] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem('slices_selected');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [transcribingSlices, setTranscribingSlices] = useState<number[]>([]);
   const [updatingNames, setUpdatingNames] = useState<number[]>([]);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [sortField, setSortField] = useState<SortField>('id');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [currentPage, setCurrentPage] = useState(() => {
+    try { return Number(localStorage.getItem('slices_page')) || 1; } catch { return 1; }
+  });
+  const [pageSize, setPageSize] = useState(() => {
+    try { return Number(localStorage.getItem('slices_pageSize')) || 25; } catch { return 25; }
+  });
+  const [sortField, setSortField] = useState<SortField>(() => {
+    try { return (localStorage.getItem('slices_sortField') as SortField) || 'id'; } catch { return 'id'; }
+  });
+  const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
+    try { return (localStorage.getItem('slices_sortDir') as SortDirection) || 'asc'; } catch { return 'asc'; }
+  });
   const [editingSlice, setEditingSlice] = useState<Slice | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
   const [editingTitleValue, setEditingTitleValue] = useState<string>('');
@@ -187,6 +203,14 @@ export default function Slices() {
   const handleDragEnd = () => {
     setDraggedColumn(null);
   };
+
+  // Persist view state to localStorage so it survives route changes
+  useEffect(() => { try { localStorage.setItem('slices_search', searchTerm); } catch {} }, [searchTerm]);
+  useEffect(() => { try { localStorage.setItem('slices_selected', JSON.stringify(selectedSlices)); } catch {} }, [selectedSlices]);
+  useEffect(() => { try { localStorage.setItem('slices_page', String(currentPage)); } catch {} }, [currentPage]);
+  useEffect(() => { try { localStorage.setItem('slices_pageSize', String(pageSize)); } catch {} }, [pageSize]);
+  useEffect(() => { try { localStorage.setItem('slices_sortField', sortField); } catch {} }, [sortField]);
+  useEffect(() => { try { localStorage.setItem('slices_sortDir', sortDirection); } catch {} }, [sortDirection]);
 
   useEffect(() => {
     loadSlices();

@@ -1597,6 +1597,9 @@ export default function Slices() {
                       <IconClock size={16} style={{ color: 'var(--mantine-color-dimmed)' }} />
                       <Text size="sm" c="dimmed">
                         {formatElapsedTime(transcriptionProgress?.elapsed_seconds || 0)}
+                        {transcriptionProgress && transcriptionProgress.estimated_total_seconds > 0 && (
+                          <Text span c="dimmed"> / {formatElapsedTime(transcriptionProgress.estimated_total_seconds)}</Text>
+                        )}
                       </Text>
                     </Group>
                   </Group>

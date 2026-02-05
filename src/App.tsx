@@ -14,9 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { AppShell, NavLink, Title, Group, ThemeIcon } from '@mantine/core';
 import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconNotebook } from '@tabler/icons-react';
+import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Settings from './pages/Settings';
@@ -59,6 +62,14 @@ function Navigation() {
 }
 
 function App() {
+  useEffect(() => {
+    invoke<{ app_version: string }>('get_system_info')
+      .then(({ app_version }) => {
+        getCurrentWindow().setTitle(`CiderPress v${app_version} - Voice Memo Liberator`);
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <Router>
       <AppShell

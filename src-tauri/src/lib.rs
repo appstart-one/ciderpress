@@ -16,7 +16,7 @@
 
 use std::sync::{Mutex, OnceLock};
 use std::path::PathBuf;
-use tauri::{State, AppHandle, Emitter};
+use tauri::{State, AppHandle, Emitter, Manager};
 use tracing::{info, error};
 
 mod backend;
@@ -1528,6 +1528,12 @@ pub fn run() {
         .setup(|app| {
             // Initialize global app handle for event emission
             init_app_handle(app.handle().clone());
+
+            // Set window title with app version
+            if let Some(window) = app.get_webview_window("main") {
+                let version = env!("CARGO_PKG_VERSION");
+                let _ = window.set_title(&format!("CiderPress v{} - Voice Memo Liberator", version));
+            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(

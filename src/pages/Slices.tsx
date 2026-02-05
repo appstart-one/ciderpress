@@ -958,7 +958,7 @@ export default function Slices() {
 
   const getStatusText = (slice: Slice) => {
     if (transcribingSlices.includes(slice.id)) return 'Transcribing Now';
-    return slice.transcribed ? 'Transcribed' : 'Pending';
+    return slice.transcribed ? 'Transcribed' : 'Audio';
   };
 
   const toggleSelectAll = () => {

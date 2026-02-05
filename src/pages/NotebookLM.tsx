@@ -32,7 +32,7 @@ import {
   Code,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconBrandGoogle, IconRefresh, IconCheck, IconX, IconNotebook, IconPlus, IconUser, IconInfoCircle } from '@tabler/icons-react';
+import { IconBrandGoogle, IconRefresh, IconCheck, IconX, IconNotebook, IconPlus, IconUser, IconInfoCircle, IconExternalLink } from '@tabler/icons-react';
 
 interface NlmStatus {
   authenticated: boolean;
@@ -241,14 +241,23 @@ export default function NotebookLM() {
     <Stack gap="lg">
       <Group justify="space-between">
         <Title order={2}>NotebookLM</Title>
-        <Button
-          variant="subtle"
-          leftSection={<IconRefresh size={16} />}
-          onClick={checkStatus}
-          loading={loading}
-        >
-          Refresh
-        </Button>
+        <Group gap="xs">
+          <Button
+            variant="subtle"
+            leftSection={<IconExternalLink size={16} />}
+            onClick={() => invoke('open_url', { url: 'https://notebooklm.google.com' })}
+          >
+            Open NotebookLM
+          </Button>
+          <Button
+            variant="subtle"
+            leftSection={<IconRefresh size={16} />}
+            onClick={checkStatus}
+            loading={loading}
+          >
+            Refresh
+          </Button>
+        </Group>
       </Group>
 
       {error && (

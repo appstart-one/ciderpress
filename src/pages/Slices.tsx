@@ -42,7 +42,7 @@ import {
   Popover
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb } from '@tabler/icons-react';
+import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink } from '@tabler/icons-react';
 import { QuillEditor } from '../components/QuillEditor';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { DraggableCard } from '../components/DraggableCard';
@@ -1241,6 +1241,14 @@ export default function Slices() {
                 title={!getSelectedNotebook() ? 'Select a notebook on the NotebookLM page first' : 'Upload text to NotebookLM'}
               >
                 NLM Text
+              </Button>
+              <Button
+                variant="outline"
+                color="violet"
+                leftSection={<IconExternalLink size={16} />}
+                onClick={() => invoke('open_url', { url: 'https://notebooklm.google.com' })}
+              >
+                Open NotebookLM
               </Button>
               <Button
                 variant="outline"

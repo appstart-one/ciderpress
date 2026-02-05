@@ -403,28 +403,33 @@ export default function Slices() {
     return () => clearInterval(interval);
   }, [transcribingSlices]);
 
+  // Reset page when search or sort changes (but not on data refresh)
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, sortField, sortDirection]);
+
   useEffect(() => {
     // Apply filtering, sorting and pagination when data or search term changes
-    let filtered = slices;
-    
+    let filtered = [...slices]; // Copy to avoid mutating state
+
     if (searchTerm) {
-      filtered = slices.filter(slice =>
+      filtered = filtered.filter(slice =>
         slice.original_audio_file_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (slice.title && slice.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (slice.transcription && slice.transcription.toLowerCase().includes(searchTerm.toLowerCase()))
       );
     }
-    
+
     // Apply sorting
     filtered.sort((a, b) => {
       const aVal = a[sortField];
       const bVal = b[sortField];
-      
+
       // Handle null values
       if (aVal === null && bVal === null) return 0;
       if (aVal === null) return sortDirection === 'asc' ? 1 : -1;
       if (bVal === null) return sortDirection === 'asc' ? -1 : 1;
-      
+
       // Handle different data types
       let comparison = 0;
       if (typeof aVal === 'string' && typeof bVal === 'string') {
@@ -436,12 +441,11 @@ export default function Slices() {
       } else {
         comparison = String(aVal).localeCompare(String(bVal));
       }
-      
+
       return sortDirection === 'asc' ? comparison : -comparison;
     });
-    
+
     setFilteredSlices(filtered);
-    setCurrentPage(1); // Reset to first page when filtering or sorting
   }, [slices, searchTerm, sortField, sortDirection]);
 
   const loadSlices = async () => {

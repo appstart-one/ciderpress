@@ -55,7 +55,7 @@ export function LockScreen({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<LockScreenConfig | null>(null);
   const lastActivityRef = useRef(Date.now());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const initialLoadDoneRef = useRef(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
 
   // Initial config load - only locks on first app start
   useEffect(() => {
@@ -69,7 +69,7 @@ export function LockScreen({ children }: { children: React.ReactNode }) {
         }
         // Reset activity timestamp so the inactivity timer starts fresh
         lastActivityRef.current = Date.now();
-        initialLoadDoneRef.current = true;
+        setInitialLoadDone(true);
       } catch {
         // Config not available yet, that's fine
       }
@@ -80,7 +80,7 @@ export function LockScreen({ children }: { children: React.ReactNode }) {
   // Reload config periodically to pick up changes from Settings
   // This only updates config values - it does NOT re-lock the screen
   useEffect(() => {
-    if (!initialLoadDoneRef.current) return;
+    if (!initialLoadDone) return;
 
     const reloadConfig = async () => {
       try {
@@ -95,9 +95,9 @@ export function LockScreen({ children }: { children: React.ReactNode }) {
       }
     };
 
-    const interval = setInterval(reloadConfig, 5000);
+    const interval = setInterval(reloadConfig, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [initialLoadDone]);
 
   // Track user activity - resets the inactivity countdown
   const handleActivity = useCallback(() => {

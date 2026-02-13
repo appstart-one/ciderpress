@@ -37,6 +37,8 @@ fi
 
 mkdir -p "$BINARIES_DIR"
 
+NLM_MODULE="github.com/tmc/nlm/cmd/nlm@latest"
+
 build_nlm() {
     local goarch="$1"
     local rust_target="$2"
@@ -44,10 +46,31 @@ build_nlm() {
 
     echo "Building NLM for target: $rust_target (GOARCH=$goarch)"
 
-    TMPDIR=$(mktemp -d)
-    GOOS=darwin GOARCH="$goarch" GOBIN="$TMPDIR" go install github.com/tmc/nlm/cmd/nlm@latest
-    mv "$TMPDIR/nlm" "$output_path"
-    rm -rf "$TMPDIR"
+    # Use a temp GOPATH so we don't pollute the user's Go installation.
+    # go install puts cross-compiled binaries under GOPATH/bin/GOOS_GOARCH/,
+    # and native binaries under GOPATH/bin/.
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    local host_arch
+    host_arch=$(uname -m)
+    local is_cross=false
+    case "$host_arch" in
+        x86_64)  [ "$goarch" != "amd64" ] && is_cross=true ;;
+        arm64|aarch64) [ "$goarch" != "arm64" ] && is_cross=true ;;
+    esac
+
+    if [ "$is_cross" = true ]; then
+        GOPATH="$tmpdir" GOOS=darwin GOARCH="$goarch" go install "$NLM_MODULE"
+        mv "$tmpdir/bin/darwin_${goarch}/nlm" "$output_path"
+    else
+        GOPATH="$tmpdir" go install "$NLM_MODULE"
+        mv "$tmpdir/bin/nlm" "$output_path"
+    fi
+
+    # Go module cache uses read-only dirs; fix permissions before cleanup
+    chmod -R u+w "$tmpdir"
+    rm -rf "$tmpdir"
     chmod +x "$output_path"
 
     echo "  Output: $output_path ($(du -h "$output_path" | cut -f1))"
@@ -57,6 +80,17 @@ if [ "$1" = "--universal" ]; then
     echo "Building NLM universal (arm64 + x86_64)..."
     build_nlm "arm64" "aarch64-apple-darwin"
     build_nlm "amd64" "x86_64-apple-darwin"
+
+    # Create universal fat binary for Tauri's universal-apple-darwin target
+    UNIVERSAL_PATH="$BINARIES_DIR/nlm-universal-apple-darwin"
+    echo "Creating universal binary with lipo..."
+    lipo -create \
+        "$BINARIES_DIR/nlm-aarch64-apple-darwin" \
+        "$BINARIES_DIR/nlm-x86_64-apple-darwin" \
+        -output "$UNIVERSAL_PATH"
+    chmod +x "$UNIVERSAL_PATH"
+    echo "  Output: $UNIVERSAL_PATH ($(du -h "$UNIVERSAL_PATH" | cut -f1))"
+    lipo -info "$UNIVERSAL_PATH"
     echo "NLM universal build complete."
 else
     # Build for host architecture only

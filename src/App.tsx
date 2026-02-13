@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { AppShell, NavLink, Title, Group, ThemeIcon, ActionIcon, Tooltip } from '@mantine/core';
+import { AppShell, NavLink, Title, Group, ThemeIcon } from '@mantine/core';
 import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconNotebook, IconLock } from '@tabler/icons-react';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -65,17 +65,17 @@ function LockNowButton() {
   if (!isPasswordEnabled) return null;
 
   return (
-    <Tooltip label="Lock Now" position="right">
-      <ActionIcon
-        variant="subtle"
-        color="gray"
-        size="lg"
-        onClick={lockNow}
-        mb="xs"
-      >
-        <IconLock size={18} />
-      </ActionIcon>
-    </Tooltip>
+    <NavLink
+      label="Lock Now"
+      leftSection={
+        <ThemeIcon variant="light" size="sm" color="red">
+          <IconLock size={16} />
+        </ThemeIcon>
+      }
+      onClick={lockNow}
+      style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}
+      pt="sm"
+    />
   );
 }
 
@@ -90,15 +90,17 @@ function App() {
           }}
           padding="md"
         >
-          <AppShell.Navbar p="md" style={{ display: 'flex', flexDirection: 'column' }}>
-            <Group justify="space-between" mb="md">
-              <Title order={3}>CiderPress</Title>
-              <ThemeToggle />
-            </Group>
-            <div style={{ flex: 1 }}>
-              <Navigation />
+          <AppShell.Navbar p="md">
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <Group justify="space-between" mb="md">
+                <Title order={3}>CiderPress</Title>
+                <ThemeToggle />
+              </Group>
+              <div style={{ flex: 1 }}>
+                <Navigation />
+              </div>
+              <LockNowButton />
             </div>
-            <LockNowButton />
           </AppShell.Navbar>
 
           <AppShell.Main>

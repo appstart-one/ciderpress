@@ -243,11 +243,17 @@ export default function Settings() {
       // Turning on - require password to be set first
       setConfig({ ...config, password_enabled: true });
     } else {
-      // Turning off - clear password
+      // Turning off - clear password and save immediately
       setNewPassword('');
       setConfirmPassword('');
       setPasswordError('');
-      setConfig({ ...config, password_enabled: false, password_hash: null });
+      const updatedConfig = { ...config, password_enabled: false, password_hash: null };
+      setConfig(updatedConfig);
+      try {
+        await invoke('update_config', { newConfig: updatedConfig });
+      } catch {
+        // ignore
+      }
     }
   };
 
@@ -261,16 +267,29 @@ export default function Settings() {
       return;
     }
     const hash = await hashPassword(newPassword);
-    setConfig({ ...config, password_hash: hash });
+    const updatedConfig = { ...config, password_hash: hash };
+    setConfig(updatedConfig);
     setNewPassword('');
     setConfirmPassword('');
     setPasswordError('');
-    notifications.show({
-      title: 'Password Set',
-      message: 'Remember to save configuration to apply changes',
-      color: 'blue',
-      icon: <IconLock size={16} />,
-    });
+
+    // Save immediately so the password takes effect right away
+    try {
+      await invoke('update_config', { newConfig: updatedConfig });
+      notifications.show({
+        title: 'Password Saved',
+        message: 'Your new password has been saved',
+        color: 'green',
+        icon: <IconLock size={16} />,
+      });
+    } catch (error) {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to save password',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
   };
 
   const resetToDefaults = () => {

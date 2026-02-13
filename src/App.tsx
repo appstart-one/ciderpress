@@ -68,7 +68,7 @@ function LockNowButton() {
     <NavLink
       label="Lock Now"
       leftSection={
-        <ThemeIcon variant="light" size="sm" color="red">
+        <ThemeIcon variant="light" size="sm" color="blue">
           <IconLock size={16} />
         </ThemeIcon>
       }

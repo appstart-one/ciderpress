@@ -1849,12 +1849,15 @@ export default function Slices() {
               required
             />
 
-            <TextInput
-              label="Content"
-              placeholder="Type your text content here..."
-              value={newSliceContent}
-              onChange={(e) => setNewSliceContent(e.currentTarget.value)}
-            />
+            <div>
+              <Text size="sm" fw={500} mb="xs">Content</Text>
+              <QuillEditor
+                value={newSliceContent}
+                onChange={(value) => setNewSliceContent(value)}
+                placeholder="Type your text content here..."
+                minHeight={250}
+              />
+            </div>
 
             <Button
               leftSection={<IconTypography size={16} />}

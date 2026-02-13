@@ -18,6 +18,10 @@
 # Build the NLM (NotebookLM CLI) binary for bundling with the Tauri app.
 # This script compiles NLM from source using Go and places it in src-tauri/binaries/
 # with the appropriate target triple suffix for Tauri sidecar support.
+#
+# Usage:
+#   ./build-nlm.sh              # Build for host architecture only (dev)
+#   ./build-nlm.sh --universal  # Build for both arm64 and x86_64 (release)
 
 set -e
 
@@ -25,45 +29,49 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BINARIES_DIR="$PROJECT_ROOT/src-tauri/binaries"
 
-# Determine target triple
-ARCH=$(uname -m)
-OS=$(uname -s)
-
-case "$ARCH" in
-    x86_64) RUST_ARCH="x86_64" ;;
-    arm64|aarch64) RUST_ARCH="aarch64" ;;
-    *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
-esac
-
-case "$OS" in
-    Darwin) RUST_TARGET="${RUST_ARCH}-apple-darwin" ;;
-    Linux) RUST_TARGET="${RUST_ARCH}-unknown-linux-gnu" ;;
-    *) echo "Unsupported OS: $OS"; exit 1 ;;
-esac
-
-OUTPUT_PATH="$BINARIES_DIR/nlm-${RUST_TARGET}"
-
 # Check if Go is installed
 if ! command -v go &> /dev/null; then
     echo "Error: Go is not installed. Install it from https://go.dev/dl/"
     exit 1
 fi
 
-echo "Building NLM for target: $RUST_TARGET"
-echo "Output: $OUTPUT_PATH"
-
-# Build NLM from source
 mkdir -p "$BINARIES_DIR"
 
-# Set GOBIN to a temp location and build
-TMPDIR=$(mktemp -d)
-GOBIN="$TMPDIR" go install github.com/tmc/nlm/cmd/nlm@latest
+build_nlm() {
+    local goarch="$1"
+    local rust_target="$2"
+    local output_path="$BINARIES_DIR/nlm-${rust_target}"
 
-# Move to the correct location with target triple suffix
-mv "$TMPDIR/nlm" "$OUTPUT_PATH"
-rm -rf "$TMPDIR"
+    echo "Building NLM for target: $rust_target (GOARCH=$goarch)"
 
-chmod +x "$OUTPUT_PATH"
+    TMPDIR=$(mktemp -d)
+    GOOS=darwin GOARCH="$goarch" GOBIN="$TMPDIR" go install github.com/tmc/nlm/cmd/nlm@latest
+    mv "$TMPDIR/nlm" "$output_path"
+    rm -rf "$TMPDIR"
+    chmod +x "$output_path"
 
-echo "NLM built successfully: $OUTPUT_PATH"
-echo "Binary size: $(du -h "$OUTPUT_PATH" | cut -f1)"
+    echo "  Output: $output_path ($(du -h "$output_path" | cut -f1))"
+}
+
+if [ "$1" = "--universal" ]; then
+    echo "Building NLM universal (arm64 + x86_64)..."
+    build_nlm "arm64" "aarch64-apple-darwin"
+    build_nlm "amd64" "x86_64-apple-darwin"
+    echo "NLM universal build complete."
+else
+    # Build for host architecture only
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64)
+            build_nlm "amd64" "x86_64-apple-darwin"
+            ;;
+        arm64|aarch64)
+            build_nlm "arm64" "aarch64-apple-darwin"
+            ;;
+        *)
+            echo "Unsupported architecture: $ARCH"
+            exit 1
+            ;;
+    esac
+    echo "NLM build complete."
+fi

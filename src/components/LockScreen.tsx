@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Box,
@@ -32,6 +32,20 @@ interface LockScreenConfig {
   password_enabled: boolean;
   password_hash: string | null;
   lock_timeout_minutes: number;
+}
+
+interface LockScreenContextValue {
+  lockNow: () => void;
+  isPasswordEnabled: boolean;
+}
+
+const LockScreenContext = createContext<LockScreenContextValue>({
+  lockNow: () => {},
+  isPasswordEnabled: false,
+});
+
+export function useLockScreen() {
+  return useContext(LockScreenContext);
 }
 
 export function LockScreen({ children }: { children: React.ReactNode }) {
@@ -158,14 +172,31 @@ export function LockScreen({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const lockNow = useCallback(() => {
+    if (config?.password_enabled && config?.password_hash) {
+      setIsLocked(true);
+      setPasswordInput('');
+      setError('');
+    }
+  }, [config?.password_enabled, config?.password_hash]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       handleUnlock();
     }
   };
 
+  const contextValue: LockScreenContextValue = {
+    lockNow,
+    isPasswordEnabled: !!(config?.password_enabled && config?.password_hash),
+  };
+
   if (!isLocked) {
-    return <>{children}</>;
+    return (
+      <LockScreenContext.Provider value={contextValue}>
+        {children}
+      </LockScreenContext.Provider>
+    );
   }
 
   return (

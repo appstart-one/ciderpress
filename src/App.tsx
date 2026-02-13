@@ -15,11 +15,11 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { AppShell, NavLink, Title, Group, ThemeIcon } from '@mantine/core';
-import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconNotebook } from '@tabler/icons-react';
+import { AppShell, NavLink, Title, Group, ThemeIcon, ActionIcon, Tooltip } from '@mantine/core';
+import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconNotebook, IconLock } from '@tabler/icons-react';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LockScreen } from './components/LockScreen';
+import { LockScreen, useLockScreen } from './components/LockScreen';
 import Settings from './pages/Settings';
 import Migrate from './pages/Migrate';
 import Stats from './pages/Stats';
@@ -59,6 +59,26 @@ function Navigation() {
   );
 }
 
+function LockNowButton() {
+  const { lockNow, isPasswordEnabled } = useLockScreen();
+
+  if (!isPasswordEnabled) return null;
+
+  return (
+    <Tooltip label="Lock Now" position="right">
+      <ActionIcon
+        variant="subtle"
+        color="gray"
+        size="lg"
+        onClick={lockNow}
+        mb="xs"
+      >
+        <IconLock size={18} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
+
 function App() {
   return (
     <Router>
@@ -70,12 +90,15 @@ function App() {
           }}
           padding="md"
         >
-          <AppShell.Navbar p="md">
+          <AppShell.Navbar p="md" style={{ display: 'flex', flexDirection: 'column' }}>
             <Group justify="space-between" mb="md">
               <Title order={3}>CiderPress</Title>
               <ThemeToggle />
             </Group>
-            <Navigation />
+            <div style={{ flex: 1 }}>
+              <Navigation />
+            </div>
+            <LockNowButton />
           </AppShell.Navbar>
 
           <AppShell.Main>

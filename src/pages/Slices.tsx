@@ -42,7 +42,8 @@ import {
   Popover
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink } from '@tabler/icons-react';
+import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink, IconPlus, IconMusic, IconTypography } from '@tabler/icons-react';
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { QuillEditor } from '../components/QuillEditor';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { DraggableCard } from '../components/DraggableCard';
@@ -123,6 +124,11 @@ export default function Slices() {
   const [debugOpened, { open: openDebug, close: closeDebug }] = useDisclosure(false);
   const [debugSlice, setDebugSlice] = useState<Slice | null>(null);
   const [transcriptionProgress, setTranscriptionProgress] = useState<TranscriptionProgress | null>(null);
+
+  // Add Slice modal state
+  const [addSliceOpened, { open: openAddSlice, close: closeAddSlice }] = useDisclosure(false);
+  const [newSliceTitle, setNewSliceTitle] = useState('');
+  const [newSliceContent, setNewSliceContent] = useState('');
 
   // NLM (NotebookLM) upload tracking
   // Stored as { [sliceId]: { audio: boolean, text: boolean } }
@@ -572,6 +578,103 @@ export default function Slices() {
       notifications.show({
         title: 'Error',
         message: 'Failed to open feature request page',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
+  // Add Slice handlers
+  const handleAddTextSlice = async () => {
+    if (!newSliceTitle.trim()) {
+      notifications.show({
+        title: 'Error',
+        message: 'Please enter a title',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+      return;
+    }
+
+    try {
+      await invoke('create_text_slice', {
+        title: newSliceTitle.trim(),
+        content: newSliceContent,
+      });
+      notifications.show({
+        title: 'Slice Created',
+        message: `Created new text slice "${newSliceTitle.trim()}"`,
+        color: 'green',
+        icon: <IconCheck size={16} />,
+      });
+      setNewSliceTitle('');
+      setNewSliceContent('');
+      closeAddSlice();
+      loadSlices();
+    } catch (error) {
+      notifications.show({
+        title: 'Error',
+        message: String(error),
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
+  const handleImportAudio = async () => {
+    try {
+      const filePath = await openFileDialog({
+        multiple: false,
+        filters: [{
+          name: 'Audio Files',
+          extensions: ['m4a', 'mp3', 'wav', 'ogg', 'flac', 'aac', 'wma'],
+        }],
+      });
+      if (!filePath) return;
+
+      await invoke('import_audio_slice', { filePath });
+      notifications.show({
+        title: 'Audio Imported',
+        message: 'Audio file imported as a new slice',
+        color: 'green',
+        icon: <IconCheck size={16} />,
+      });
+      closeAddSlice();
+      loadSlices();
+    } catch (error) {
+      notifications.show({
+        title: 'Import Failed',
+        message: String(error),
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
+  const handleImportTextFile = async () => {
+    try {
+      const filePath = await openFileDialog({
+        multiple: false,
+        filters: [{
+          name: 'Text Files',
+          extensions: ['txt', 'md', 'doc', 'docx', 'rtf'],
+        }],
+      });
+      if (!filePath) return;
+
+      await invoke('import_text_file_slice', { filePath });
+      notifications.show({
+        title: 'Text File Imported',
+        message: 'Text file imported as a new slice',
+        color: 'green',
+        icon: <IconCheck size={16} />,
+      });
+      closeAddSlice();
+      loadSlices();
+    } catch (error) {
+      notifications.show({
+        title: 'Import Failed',
+        message: String(error),
         color: 'red',
         icon: <IconX size={16} />,
       });
@@ -1262,6 +1365,13 @@ export default function Slices() {
               >
                 Suggest Feature
               </Button>
+              <Button
+                variant="filled"
+                leftSection={<IconPlus size={16} />}
+                onClick={openAddSlice}
+              >
+                Add Slice
+              </Button>
             </Group>
           </Group>
         </Paper>
@@ -1683,6 +1793,78 @@ export default function Slices() {
             </Box>
           )}
         </Transition>
+
+        {/* Add Slice Modal */}
+        <Modal
+          opened={addSliceOpened}
+          onClose={() => {
+            closeAddSlice();
+            setNewSliceTitle('');
+            setNewSliceContent('');
+          }}
+          title="Add New Slice"
+          size="lg"
+        >
+          <Stack gap="lg">
+            <Text size="sm" c="dimmed">
+              Choose how to add a new slice: import an audio file, import a text file, or type in a new entry.
+            </Text>
+
+            <Group grow>
+              <Button
+                variant="light"
+                leftSection={<IconMusic size={18} />}
+                onClick={handleImportAudio}
+                size="lg"
+                style={{ height: 80 }}
+              >
+                <Stack gap={2} align="center">
+                  <Text size="sm" fw={600}>Import Audio</Text>
+                  <Text size="xs" c="dimmed">m4a, mp3, wav, etc.</Text>
+                </Stack>
+              </Button>
+
+              <Button
+                variant="light"
+                color="teal"
+                leftSection={<IconFileText size={18} />}
+                onClick={handleImportTextFile}
+                size="lg"
+                style={{ height: 80 }}
+              >
+                <Stack gap={2} align="center">
+                  <Text size="sm" fw={600}>Import Text File</Text>
+                  <Text size="xs" c="dimmed">txt, md, doc, docx</Text>
+                </Stack>
+              </Button>
+            </Group>
+
+            <Text size="sm" fw={500} ta="center" c="dimmed">or type a new entry below</Text>
+
+            <TextInput
+              label="Title"
+              placeholder="Enter slice title"
+              value={newSliceTitle}
+              onChange={(e) => setNewSliceTitle(e.currentTarget.value)}
+              required
+            />
+
+            <TextInput
+              label="Content"
+              placeholder="Type your text content here..."
+              value={newSliceContent}
+              onChange={(e) => setNewSliceContent(e.currentTarget.value)}
+            />
+
+            <Button
+              leftSection={<IconTypography size={16} />}
+              onClick={handleAddTextSlice}
+              disabled={!newSliceTitle.trim()}
+            >
+              Create Text Slice
+            </Button>
+          </Stack>
+        </Modal>
       </Stack>
     </Container>
   );

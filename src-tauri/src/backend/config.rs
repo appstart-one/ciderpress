@@ -28,6 +28,16 @@ pub struct Config {
     pub first_run_complete: bool,
     #[serde(default = "default_skip_already_transcribed")]
     pub skip_already_transcribed: bool,
+    #[serde(default)]
+    pub password_enabled: bool,
+    #[serde(default)]
+    pub password_hash: Option<String>,
+    #[serde(default = "default_lock_timeout_minutes")]
+    pub lock_timeout_minutes: u32,
+}
+
+fn default_lock_timeout_minutes() -> u32 {
+    5
 }
 
 fn default_skip_already_transcribed() -> bool {
@@ -49,6 +59,9 @@ impl Default for Config {
             model_name: "base.en".to_string(),
             first_run_complete: false,
             skip_already_transcribed: true,
+            password_enabled: false,
+            password_hash: None,
+            lock_timeout_minutes: 5,
         }
     }
 }

@@ -1425,6 +1425,217 @@ async fn get_system_info() -> Result<serde_json::Value, ApiError> {
     }))
 }
 
+// ==================== Slice creation commands ====================
+
+#[tauri::command]
+async fn create_text_slice(
+    state: State<'_, AppState>,
+    title: String,
+    content: String,
+) -> Result<i64, ApiError> {
+    let db_guard = state.db.lock().map_err(|e| ApiError {
+        message: format!("Failed to lock database: {}", e),
+        kind: "LockError".to_string(),
+    })?;
+
+    let db = db_guard.as_ref().ok_or_else(|| ApiError {
+        message: "Database not initialized".to_string(),
+        kind: "DatabaseError".to_string(),
+    })?;
+
+    // Generate a unique filename for this text-based slice
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let unique_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let filename = format!("text_entry_{}_{}.txt", timestamp, unique_id);
+
+    let word_count = content.split_whitespace().count() as i32;
+
+    let slice = Slice {
+        id: None,
+        original_audio_file_name: filename,
+        title: Some(title),
+        transcribed: true,
+        audio_file_size: content.len() as i64,
+        audio_file_type: "text".to_string(),
+        estimated_time_to_transcribe: 0,
+        audio_time_length_seconds: None,
+        transcription: Some(content),
+        transcription_time_taken: Some(0),
+        transcription_word_count: Some(word_count),
+        transcription_model: Some("manual".to_string()),
+        recording_date: Some(chrono::Utc::now().timestamp()),
+    };
+
+    let id = db.insert_slice(&slice)?;
+    info!("Created text slice with ID {}", id);
+    Ok(id)
+}
+
+#[tauri::command]
+async fn import_audio_slice(
+    state: State<'_, AppState>,
+    file_path: String,
+    title: Option<String>,
+) -> Result<i64, ApiError> {
+    let config = state.config.lock().map_err(|e| ApiError {
+        message: format!("Failed to lock config: {}", e),
+        kind: "LockError".to_string(),
+    })?.clone();
+
+    let db_guard = state.db.lock().map_err(|e| ApiError {
+        message: format!("Failed to lock database: {}", e),
+        kind: "LockError".to_string(),
+    })?;
+
+    let db = db_guard.as_ref().ok_or_else(|| ApiError {
+        message: "Database not initialized".to_string(),
+        kind: "DatabaseError".to_string(),
+    })?;
+
+    let source_path = PathBuf::from(&file_path);
+    if !source_path.exists() {
+        return Err(ApiError {
+            message: format!("File not found: {}", file_path),
+            kind: "FileNotFoundError".to_string(),
+        });
+    }
+
+    let filename = source_path.file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ApiError {
+            message: "Invalid filename".to_string(),
+            kind: "ValidationError".to_string(),
+        })?
+        .to_string();
+
+    // Check if a slice with this filename already exists
+    if db.slice_exists(&filename)? {
+        return Err(ApiError {
+            message: format!("A slice with filename '{}' already exists", filename),
+            kind: "DuplicateError".to_string(),
+        });
+    }
+
+    // Copy audio file to CiderPress audio directory
+    let dest_path = config.audio_dir().join(&filename);
+    std::fs::copy(&source_path, &dest_path).map_err(|e| ApiError {
+        message: format!("Failed to copy audio file: {}", e),
+        kind: "IoError".to_string(),
+    })?;
+
+    // Get file metadata
+    let metadata = std::fs::metadata(&dest_path).map_err(|e| ApiError {
+        message: format!("Failed to read file metadata: {}", e),
+        kind: "IoError".to_string(),
+    })?;
+
+    let file_size = metadata.len() as i64;
+    let ext = source_path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("unknown")
+        .to_lowercase();
+
+    // Try to get audio duration
+    let duration = get_audio_duration(&dest_path);
+
+    // Estimate transcription time (roughly 1 second per 34KB)
+    let estimated_time = (file_size / 34000).max(1) as i32;
+
+    let slice_title = title.unwrap_or_else(|| {
+        source_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported Audio")
+            .to_string()
+    });
+
+    let slice = Slice {
+        id: None,
+        original_audio_file_name: filename,
+        title: Some(slice_title),
+        transcribed: false,
+        audio_file_size: file_size,
+        audio_file_type: ext,
+        estimated_time_to_transcribe: estimated_time,
+        audio_time_length_seconds: duration,
+        transcription: None,
+        transcription_time_taken: None,
+        transcription_word_count: None,
+        transcription_model: None,
+        recording_date: Some(chrono::Utc::now().timestamp()),
+    };
+
+    let id = db.insert_slice(&slice)?;
+    info!("Imported audio slice with ID {} from {}", id, file_path);
+    Ok(id)
+}
+
+#[tauri::command]
+async fn import_text_file_slice(
+    state: State<'_, AppState>,
+    file_path: String,
+    title: Option<String>,
+) -> Result<i64, ApiError> {
+    let db_guard = state.db.lock().map_err(|e| ApiError {
+        message: format!("Failed to lock database: {}", e),
+        kind: "LockError".to_string(),
+    })?;
+
+    let db = db_guard.as_ref().ok_or_else(|| ApiError {
+        message: "Database not initialized".to_string(),
+        kind: "DatabaseError".to_string(),
+    })?;
+
+    let source_path = PathBuf::from(&file_path);
+    if !source_path.exists() {
+        return Err(ApiError {
+            message: format!("File not found: {}", file_path),
+            kind: "FileNotFoundError".to_string(),
+        });
+    }
+
+    let content = std::fs::read_to_string(&source_path).map_err(|e| ApiError {
+        message: format!("Failed to read text file: {}", e),
+        kind: "IoError".to_string(),
+    })?;
+
+    let filename = source_path.file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ApiError {
+            message: "Invalid filename".to_string(),
+            kind: "ValidationError".to_string(),
+        })?
+        .to_string();
+
+    let slice_title = title.unwrap_or_else(|| {
+        source_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported Text")
+            .to_string()
+    });
+
+    let word_count = content.split_whitespace().count() as i32;
+
+    let slice = Slice {
+        id: None,
+        original_audio_file_name: filename,
+        title: Some(slice_title),
+        transcribed: true,
+        audio_file_size: content.len() as i64,
+        audio_file_type: "text".to_string(),
+        estimated_time_to_transcribe: 0,
+        audio_time_length_seconds: None,
+        transcription: Some(content),
+        transcription_time_taken: Some(0),
+        transcription_word_count: Some(word_count),
+        transcription_model: Some("imported".to_string()),
+        recording_date: Some(chrono::Utc::now().timestamp()),
+    };
+
+    let id = db.insert_slice(&slice)?;
+    info!("Imported text file slice with ID {} from {}", id, file_path);
+    Ok(id)
+}
+
 #[tauri::command]
 async fn open_url(url: String) -> Result<(), ApiError> {
     std::process::Command::new("open")
@@ -1523,7 +1734,10 @@ pub fn run() {
             nlm_create_notebook,
             nlm_get_notebook_details,
             get_system_info,
-            open_url
+            open_url,
+            create_text_slice,
+            import_audio_slice,
+            import_text_file_slice
         ])
         .setup(|app| {
             // Initialize global app handle for event emission

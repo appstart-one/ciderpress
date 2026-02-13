@@ -19,6 +19,7 @@ import { AppShell, NavLink, Title, Group, ThemeIcon } from '@mantine/core';
 import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconNotebook } from '@tabler/icons-react';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { LockScreen } from './components/LockScreen';
 import Settings from './pages/Settings';
 import Migrate from './pages/Migrate';
 import Stats from './pages/Stats';
@@ -61,34 +62,36 @@ function Navigation() {
 function App() {
   return (
     <Router>
-      <AppShell
-        navbar={{
-          width: 250,
-          breakpoint: 'sm',
-        }}
-        padding="md"
-      >
-        <AppShell.Navbar p="md">
-          <Group justify="space-between" mb="md">
-            <Title order={3}>CiderPress</Title>
-            <ThemeToggle />
-          </Group>
-          <Navigation />
-        </AppShell.Navbar>
+      <LockScreen>
+        <AppShell
+          navbar={{
+            width: 250,
+            breakpoint: 'sm',
+          }}
+          padding="md"
+        >
+          <AppShell.Navbar p="md">
+            <Group justify="space-between" mb="md">
+              <Title order={3}>CiderPress</Title>
+              <ThemeToggle />
+            </Group>
+            <Navigation />
+          </AppShell.Navbar>
 
-        <AppShell.Main>
-          <ErrorBoundary>
-            <Routes>
-              <Route path="/" element={<Slices />} />
-              <Route path="/migrate" element={<Migrate />} />
-              <Route path="/stats" element={<Stats />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/labels" element={<LabelSettings />} />
-              <Route path="/notebook-lm" element={<NotebookLM />} />
-            </Routes>
-          </ErrorBoundary>
-        </AppShell.Main>
-      </AppShell>
+          <AppShell.Main>
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Slices />} />
+                <Route path="/migrate" element={<Migrate />} />
+                <Route path="/stats" element={<Stats />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/labels" element={<LabelSettings />} />
+                <Route path="/notebook-lm" element={<NotebookLM />} />
+              </Routes>
+            </ErrorBoundary>
+          </AppShell.Main>
+        </AppShell>
+      </LockScreen>
     </Router>
   );
 }

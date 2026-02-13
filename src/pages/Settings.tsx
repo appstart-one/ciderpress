@@ -23,6 +23,8 @@ import {
   Title,
   Paper,
   TextInput,
+  PasswordInput,
+  NumberInput,
   Button,
   Group,
   Text,
@@ -35,7 +37,7 @@ import {
   Transition,
   ThemeIcon
 } from '@mantine/core';
-import { IconCheck, IconX, IconInfoCircle, IconDownload, IconShieldLock } from '@tabler/icons-react';
+import { IconCheck, IconX, IconInfoCircle, IconDownload, IconShieldLock, IconLock } from '@tabler/icons-react';
 import { DraggableCard } from '../components/DraggableCard';
 
 interface ModelDownloadProgress {
@@ -51,6 +53,9 @@ interface Config {
   model_name: string;
   first_run_complete: boolean;
   skip_already_transcribed: boolean;
+  password_enabled: boolean;
+  password_hash: string | null;
+  lock_timeout_minutes: number;
 }
 
 // Base Whisper model information
@@ -77,6 +82,9 @@ export default function Settings() {
     model_name: 'base.en',
     first_run_complete: false,
     skip_already_transcribed: true,
+    password_enabled: false,
+    password_hash: null,
+    lock_timeout_minutes: 5,
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isValid, setIsValid] = useState<boolean>(false);
@@ -84,6 +92,9 @@ export default function Settings() {
   const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<ModelDownloadProgress | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
   useEffect(() => {
     loadConfig();
@@ -219,6 +230,49 @@ export default function Settings() {
     }
   };
 
+  const hashPassword = async (password: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const handlePasswordToggle = async (enabled: boolean) => {
+    if (enabled) {
+      // Turning on - require password to be set first
+      setConfig({ ...config, password_enabled: true });
+    } else {
+      // Turning off - clear password
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordError('');
+      setConfig({ ...config, password_enabled: false, password_hash: null });
+    }
+  };
+
+  const handleSetPassword = async () => {
+    if (newPassword.length < 4) {
+      setPasswordError('Password must be at least 4 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match');
+      return;
+    }
+    const hash = await hashPassword(newPassword);
+    setConfig({ ...config, password_hash: hash });
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordError('');
+    notifications.show({
+      title: 'Password Set',
+      message: 'Remember to save configuration to apply changes',
+      color: 'blue',
+      icon: <IconLock size={16} />,
+    });
+  };
+
   const resetToDefaults = () => {
     const defaultConfig: Config = {
       voice_memo_root: '/Users/yourname/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings',
@@ -226,6 +280,9 @@ export default function Settings() {
       model_name: 'base.en',
       first_run_complete: false,
       skip_already_transcribed: true,
+      password_enabled: false,
+      password_hash: null,
+      lock_timeout_minutes: 5,
     };
     setConfig(defaultConfig);
     setIsValid(false);
@@ -328,6 +385,73 @@ export default function Settings() {
               checked={config.skip_already_transcribed}
               onChange={(e) => setConfig({ ...config, skip_already_transcribed: e.currentTarget.checked })}
             />
+          </Stack>
+        </Paper>
+
+        <Paper p="lg" withBorder>
+          <Stack gap="md">
+            <Title order={3}>Security</Title>
+
+            <Switch
+              label="Enable password lock"
+              description="When enabled, the app will lock after a period of inactivity and require a password to unlock."
+              checked={config.password_enabled}
+              onChange={(e) => handlePasswordToggle(e.currentTarget.checked)}
+            />
+
+            {config.password_enabled && (
+              <>
+                <PasswordInput
+                  label="Password"
+                  description="Enter a password to protect the app"
+                  placeholder="Enter password"
+                  value={newPassword}
+                  onChange={(e) => {
+                    setNewPassword(e.target.value);
+                    setPasswordError('');
+                  }}
+                  error={passwordError && !confirmPassword ? passwordError : undefined}
+                />
+
+                <PasswordInput
+                  label="Confirm Password"
+                  description="Re-enter the password to confirm"
+                  placeholder="Confirm password"
+                  value={confirmPassword}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    setPasswordError('');
+                  }}
+                  error={passwordError || undefined}
+                />
+
+                <Button
+                  variant="light"
+                  leftSection={<IconLock size={16} />}
+                  onClick={handleSetPassword}
+                  disabled={!newPassword || !confirmPassword}
+                >
+                  Set Password
+                </Button>
+
+                {config.password_hash && (
+                  <Text size="sm" c="green">
+                    <IconCheck size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                    Password is set
+                  </Text>
+                )}
+
+                <NumberInput
+                  label="Lock timeout (minutes)"
+                  description="Number of minutes of inactivity before the app locks. Set to 0 to only lock on app restart."
+                  value={config.lock_timeout_minutes}
+                  onChange={(value) => setConfig({ ...config, lock_timeout_minutes: typeof value === 'number' ? value : 5 })}
+                  min={0}
+                  max={120}
+                  step={1}
+                />
+              </>
+            )}
           </Stack>
         </Paper>
 

@@ -41,31 +41,51 @@ export function LockScreen({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<LockScreenConfig | null>(null);
   const lastActivityRef = useRef(Date.now());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initialLoadDoneRef = useRef(false);
 
-  const loadConfig = useCallback(async () => {
-    try {
-      const loadedConfig = await invoke<LockScreenConfig>('get_config');
-      setConfig(loadedConfig);
-      // Lock immediately on first load if password is enabled
-      if (loadedConfig.password_enabled && loadedConfig.password_hash) {
-        setIsLocked(true);
+  // Initial config load - only locks on first app start
+  useEffect(() => {
+    const doInitialLoad = async () => {
+      try {
+        const loadedConfig = await invoke<LockScreenConfig>('get_config');
+        setConfig(loadedConfig);
+        // Only lock on the very first load (app startup)
+        if (loadedConfig.password_enabled && loadedConfig.password_hash) {
+          setIsLocked(true);
+        }
+        // Reset activity timestamp so the inactivity timer starts fresh
+        lastActivityRef.current = Date.now();
+        initialLoadDoneRef.current = true;
+      } catch {
+        // Config not available yet, that's fine
       }
-    } catch {
-      // Config not available yet, that's fine
-    }
+    };
+    doInitialLoad();
   }, []);
 
-  useEffect(() => {
-    loadConfig();
-  }, [loadConfig]);
-
   // Reload config periodically to pick up changes from Settings
+  // This only updates config values - it does NOT re-lock the screen
   useEffect(() => {
-    const interval = setInterval(loadConfig, 5000);
-    return () => clearInterval(interval);
-  }, [loadConfig]);
+    if (!initialLoadDoneRef.current) return;
 
-  // Track user activity
+    const reloadConfig = async () => {
+      try {
+        const loadedConfig = await invoke<LockScreenConfig>('get_config');
+        setConfig(loadedConfig);
+        // If password was just disabled, unlock immediately
+        if (!loadedConfig.password_enabled || !loadedConfig.password_hash) {
+          setIsLocked(false);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    const interval = setInterval(reloadConfig, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Track user activity - resets the inactivity countdown
   const handleActivity = useCallback(() => {
     lastActivityRef.current = Date.now();
   }, []);
@@ -75,29 +95,33 @@ export function LockScreen({ children }: { children: React.ReactNode }) {
     window.addEventListener('keydown', handleActivity);
     window.addEventListener('click', handleActivity);
     window.addEventListener('scroll', handleActivity);
+    window.addEventListener('touchstart', handleActivity);
 
     return () => {
       window.removeEventListener('mousemove', handleActivity);
       window.removeEventListener('keydown', handleActivity);
       window.removeEventListener('click', handleActivity);
       window.removeEventListener('scroll', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
     };
   }, [handleActivity]);
 
-  // Check for inactivity timeout
+  // Check for inactivity timeout - only locks after the full timeout has elapsed
   useEffect(() => {
-    if (!config?.password_enabled || !config?.password_hash || config.lock_timeout_minutes === 0) {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    if (!config?.password_enabled || !config?.password_hash || config.lock_timeout_minutes === 0 || isLocked) {
       return;
     }
 
+    const timeoutMs = config.lock_timeout_minutes * 60 * 1000;
+
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - lastActivityRef.current;
-      const timeoutMs = config.lock_timeout_minutes * 60 * 1000;
-      if (elapsed >= timeoutMs && !isLocked) {
+      if (elapsed >= timeoutMs) {
         setIsLocked(true);
         setPasswordInput('');
         setError('');
@@ -109,7 +133,7 @@ export function LockScreen({ children }: { children: React.ReactNode }) {
         clearInterval(timerRef.current);
       }
     };
-  }, [config, isLocked]);
+  }, [config?.password_enabled, config?.password_hash, config?.lock_timeout_minutes, isLocked]);
 
   const hashPassword = async (password: string): Promise<string> => {
     const encoder = new TextEncoder();

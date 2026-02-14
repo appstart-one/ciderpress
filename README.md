@@ -8,17 +8,17 @@ CiderPress lets you copy Apple Voice Memos into your own space, where you can tr
 CiderPress is designed for people who journal using audio recordings. For those who want to journal but are too busy to write, Apple Voice Memos plus CiderPress lets them capture everything and then interact with their journal entries in whatever way they choose.
 
 ## Videos
-CiderPress Walk thru
-
+CiderPress Walk thru  
+<br/>
 [![CiderPress Walk thru](https://img.youtube.com/vi/GqkIERU-yRc/0.jpg)](https://www.youtube.com/watch?v=GqkIERU-yRc)
 
 
-CiderPress Installation Steps (2 minutes, how to enable)
+CiderPress Installation Steps (2 minutes, how to enable)  
 
 [![CiderPress Installation Steps](https://img.youtube.com/vi/mJyhGngpzuA/0.jpg)](https://www.youtube.com/watch?v=mJyhGngpzuA)
 
 
-Just for fun: CiderPress Description animation
+Just for fun: CiderPress Description animation  
 
 [![CiderPress Description animation](https://img.youtube.com/vi/NNW_khqRv4I/0.jpg)](https://www.youtube.com/watch?v=NNW_khqRv4I)
 

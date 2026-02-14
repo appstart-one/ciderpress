@@ -1,11 +1,11 @@
-# CiderPress - Create your Audio Journal
+# CiderPress: Turn your voice memos into living knowledge.
 ### Journal with Apple's Voice Memo, Transcribe and then Talk to your journal, generate podcasts and more
 
 <!-- > **New user?** See the [Quick Start Guide](QUICKSTART.md) to get up and running. -->
 
-CiderPress, which lets you copy Apple Voice memos into your own space where you can transcribe, view, export and more one at a time or many. Then you can once click upload them to Google's notebook LM Where they can come alive when you ask questions of your journal, have a discussion, generate infographics, and/or have a podcast about any part of your journal you specify. 
+CiderPress lets you copy Apple Voice Memos into your own space, where you can transcribe, view, export, and manage them—one at a time or in batches. With a single click, you can upload them to Google’s NotebookLM, where they come alive: ask questions of your journal, have discussions, generate infographics, or even create a podcast about any part of your journal you choose. 
 
-The audience for CiderPress is meant to be people who journal by making audio recordings. People that want to journal but are too busy can use Apple Voice memo and, with this app, capture everything and then interact with their journal entries in any way they choose.
+CiderPress is designed for people who journal using audio recordings. For those who want to journal but are too busy to write, Apple Voice Memos plus CiderPress lets them capture everything and then interact with their journal entries in whatever way they choose.
 
 ## Videos
 CiderPress Walk thru

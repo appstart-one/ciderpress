@@ -87,7 +87,7 @@ export default function Settings() {
     lock_timeout_minutes: 5,
   });
   const [isLoading, setIsLoading] = useState(false);
-  const [isValid, setIsValid] = useState<boolean>(false);
+  const [validationStatus, setValidationStatus] = useState<string>('NotFound');
   const [loading, setLoading] = useState(true);
   const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<ModelDownloadProgress | null>(null);
@@ -193,10 +193,10 @@ export default function Settings() {
 
   const validatePaths = async () => {
     try {
-      const valid = await invoke<boolean>('validate_paths');
-      setIsValid(valid);
+      const result = await invoke<{ status: string }>('validate_paths');
+      setValidationStatus(result.status);
     } catch (error) {
-      setIsValid(false);
+      setValidationStatus('NotFound');
       notifications.show({
         title: 'Error',
         message: 'Failed to validate paths',
@@ -304,7 +304,7 @@ export default function Settings() {
       lock_timeout_minutes: 5,
     };
     setConfig(defaultConfig);
-    setIsValid(false);
+    setValidationStatus('NotFound');
     notifications.show({
       title: 'Success',
       message: 'Configuration reset to defaults',
@@ -482,26 +482,68 @@ export default function Settings() {
                 width: 12,
                 height: 12,
                 borderRadius: '50%',
-                backgroundColor: isValid ? '#10b981' : '#ef4444'
+                backgroundColor: validationStatus === 'Valid' ? '#10b981' : '#ef4444'
               }} />
-              <Text size="sm" c={isValid ? 'green' : 'red'}>
-                {isValid ? 'Apple DB connection successful' : 'Cannot connect to Apple DB'}
+              <Text size="sm" c={validationStatus === 'Valid' ? 'green' : 'red'}>
+                {validationStatus === 'Valid'
+                  ? 'Apple DB connection successful'
+                  : validationStatus === 'PermissionDenied'
+                  ? 'Permission denied — Full Disk Access required'
+                  : validationStatus === 'NoRecordings'
+                  ? 'No voice memo recordings found'
+                  : validationStatus === 'NoDatabaseFound'
+                  ? 'CloudRecordings.db not found in directory'
+                  : 'Cannot connect to Apple DB'}
               </Text>
             </Group>
-            {!isValid && !loading && (
-              <Alert icon={<IconShieldLock size={16} />} title="Cannot Access Voice Memos" color="red" variant="light">
+            {validationStatus === 'PermissionDenied' && !loading && (
+              <Alert icon={<IconShieldLock size={16} />} title="Full Disk Access Required" color="red" variant="light">
                 <Stack gap="xs">
                   <Text size="sm">
-                    CiderPress cannot read the Apple Voice Memos directory. This is usually caused by one of two things:
+                    macOS blocked CiderPress from reading the Voice Memos directory. Grant Full Disk Access to fix this:
                   </Text>
-                  <Text size="sm" fw={600}>Option 1: Grant Full Disk Access (recommended)</Text>
-                  <Text size="sm">
-                    Open <b>System Settings &rarr; Privacy &amp; Security &rarr; Full Disk Access</b> and enable CiderPress.
-                    Then restart the app.
+                  <Text size="sm" fw={600}>1. Open System Settings &rarr; Privacy &amp; Security &rarr; Full Disk Access</Text>
+                  <Text size="sm" fw={600}>2. Enable CiderPress in the list</Text>
+                  <Text size="sm" fw={600}>3. Restart CiderPress</Text>
+                  <Text size="sm" c="dimmed" mt="xs">
+                    If CiderPress doesn't appear in the list, click the "+" button and navigate to your Applications folder to add it manually.
                   </Text>
-                  <Text size="sm" fw={600}>Option 2: Copy files manually</Text>
+                </Stack>
+              </Alert>
+            )}
+            {validationStatus === 'NotFound' && !loading && (
+              <Alert icon={<IconInfoCircle size={16} />} title="Directory Not Found" color="orange" variant="light">
+                <Stack gap="xs">
                   <Text size="sm">
-                    Copy your Voice Memos from <code>~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings/</code> to a folder you can access, then update the <b>Voice Memo Root Directory</b> path above to point there.
+                    The Voice Memo Root Directory path does not exist. Please check the path above is correct.
+                  </Text>
+                  <Text size="sm">
+                    The default Apple Voice Memos location is:<br />
+                    <code>~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings</code>
+                  </Text>
+                </Stack>
+              </Alert>
+            )}
+            {validationStatus === 'NoDatabaseFound' && !loading && (
+              <Alert icon={<IconInfoCircle size={16} />} title="Database Not Found" color="orange" variant="light">
+                <Stack gap="xs">
+                  <Text size="sm">
+                    The directory exists but <code>CloudRecordings.db</code> was not found. This doesn't look like an Apple Voice Memos directory.
+                  </Text>
+                  <Text size="sm">
+                    Please check that the <b>Voice Memo Root Directory</b> path above points to the correct location.
+                  </Text>
+                </Stack>
+              </Alert>
+            )}
+            {validationStatus === 'NoRecordings' && !loading && (
+              <Alert icon={<IconInfoCircle size={16} />} title="No Recordings Found" color="yellow" variant="light">
+                <Stack gap="xs">
+                  <Text size="sm">
+                    The Voice Memos directory is accessible and contains the database, but no <code>.m4a</code> audio files were found.
+                  </Text>
+                  <Text size="sm">
+                    Record a voice memo on your Mac or iPhone (with iCloud sync enabled) and check back.
                   </Text>
                 </Stack>
               </Alert>

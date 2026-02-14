@@ -40,6 +40,9 @@
     ],
     "externalBin": [
       "binaries/nlm"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

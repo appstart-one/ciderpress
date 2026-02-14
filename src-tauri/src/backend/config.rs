@@ -20,6 +20,22 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// Result of validating the Voice Memos directory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", content = "message")]
+pub enum VoiceMemoValidation {
+    /// Directory exists, contains DB and recordings
+    Valid,
+    /// macOS denied access — FDA not granted or signing identity mismatch
+    PermissionDenied,
+    /// Directory path does not exist
+    NotFound,
+    /// Directory exists but CloudRecordings.db is missing
+    NoDatabaseFound,
+    /// Directory exists with DB but no .m4a files
+    NoRecordings,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub voice_memo_root: String,
@@ -128,35 +144,80 @@ impl Config {
         self.ciderpress_home_path().join("logs")
     }
 
-    /// Validate that the voice memo root contains the expected files
-    pub fn validate_voice_memo_root(&self) -> Result<()> {
+    /// Validate that the voice memo root contains the expected files.
+    /// Returns a structured result distinguishing permission errors from missing dirs.
+    pub fn validate_voice_memo_root(&self) -> VoiceMemoValidation {
         let root = self.voice_memo_root_path();
-        
+
+        // On macOS, protected directories (like Voice Memos) return false for
+        // .exists() when FDA is not granted — the OS reports EPERM, which
+        // std::fs::metadata() turns into an error, making .exists() false.
+        // We distinguish "permission denied" from "truly missing" by checking
+        // whether the parent directory exists and is accessible.
         if !root.exists() {
-            anyhow::bail!("Voice memo root directory does not exist: {:?}", root);
+            // Check if parent is accessible to distinguish permission denied from missing
+            if let Some(parent) = root.parent() {
+                match fs::read_dir(parent) {
+                    Ok(_) => {
+                        // Parent is accessible but the target dir doesn't exist
+                        return VoiceMemoValidation::NotFound;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        return VoiceMemoValidation::PermissionDenied;
+                    }
+                    Err(_) => {
+                        // Parent doesn't exist or other error — treat as not found
+                        return VoiceMemoValidation::NotFound;
+                    }
+                }
+            }
+            return VoiceMemoValidation::NotFound;
         }
 
-        let recordings_db = root.join("CloudRecordings.db");
-        if !recordings_db.exists() {
-            anyhow::bail!("CloudRecordings.db not found in voice memo root: {:?}", root);
+        // Directory exists — try to read it
+        match fs::read_dir(&root) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                return VoiceMemoValidation::PermissionDenied;
+            }
+            Err(_) => {
+                return VoiceMemoValidation::NotFound;
+            }
+            Ok(entries) => {
+                let mut has_db = false;
+                let mut has_m4a = false;
+
+                // Check for CloudRecordings.db separately (it may be in the dir root)
+                if root.join("CloudRecordings.db").exists() {
+                    has_db = true;
+                }
+
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if ext.eq_ignore_ascii_case("m4a") {
+                            has_m4a = true;
+                        }
+                    }
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name == "CloudRecordings.db" {
+                            has_db = true;
+                        }
+                    }
+                    if has_db && has_m4a {
+                        break;
+                    }
+                }
+
+                if !has_db {
+                    return VoiceMemoValidation::NoDatabaseFound;
+                }
+                if !has_m4a {
+                    return VoiceMemoValidation::NoRecordings;
+                }
+
+                VoiceMemoValidation::Valid
+            }
         }
-
-        // Check for at least one .m4a file
-        let has_m4a = fs::read_dir(&root)?
-            .filter_map(|entry| entry.ok())
-            .any(|entry| {
-                entry.path()
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext.eq_ignore_ascii_case("m4a"))
-                    .unwrap_or(false)
-            });
-
-        if !has_m4a {
-            anyhow::bail!("No .m4a files found in voice memo root: {:?}", root);
-        }
-
-        Ok(())
     }
 
     /// Ensure CiderPress home directory and subdirectories exist

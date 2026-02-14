@@ -22,7 +22,7 @@ use tracing::{info, error};
 mod backend;
 
 use backend::{
-    config::Config,
+    config::{Config, VoiceMemoValidation},
     database::Database,
     logging,
     migrate::{MigrationEngine, get_audio_duration},
@@ -93,16 +93,13 @@ async fn update_config(state: State<'_, AppState>, new_config: Config) -> Result
 }
 
 #[tauri::command]
-async fn validate_paths(state: State<'_, AppState>) -> Result<bool, ApiError> {
+async fn validate_paths(state: State<'_, AppState>) -> Result<VoiceMemoValidation, ApiError> {
     let config = state.config.lock().map_err(|e| ApiError {
         message: format!("Failed to lock config: {}", e),
         kind: "LockError".to_string(),
     })?;
-    
-    match config.validate_voice_memo_root() {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
+
+    Ok(config.validate_voice_memo_root())
 }
 
 #[tauri::command]

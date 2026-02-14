@@ -2,7 +2,44 @@
 
 > **New user?** See the [Quick Start Guide](QUICKSTART.md) to get up and running.
 
-A desktop application built with Tauri and React that liberates your Apple Voice Memos by copying them to a local database, enabling transcription, search, and export capabilities.
+CiderPress, which lets you copy Apple Voice memos into your own space where you can transcribe, view, export and more one at a time or many. Then you can once click upload them to Google's notebook LM Where they can come alive when you ask questions of your journal, have a discussion, generate infographics, and/or have a podcast about any part of your journal you specify. 
+
+The audience for CiderPress is meant to be people who journal by making audio recordings. People that want to journal but are too busy can use Apple Voice memo and, with this app, capture everything and then interact with their journal entries in any way they choose.
+
+[![CiderPress Walk thru](https://img.youtube.com/vi/GqkIERU-yRc/0.jpg)](https://www.youtube.com/watch?v=GqkIERU-yRc)
+
+[![CiderPress Description animation](https://img.youtube.com/vi/NNW_khqRv4I/0.jpg)](https://www.youtube.com/watch?v=NNW_khqRv4I)
+
+
+## Screenshots
+
+Slices Screen
+![Slices Screen](./assets/ciderpress-screen1-slices.png)
+
+Stats Screen
+![Slices Screen](./assets/ciderpress-screen2-stats.png)
+
+Migrate Screen
+![Slices Screen](./assets/ciderpress-screen3-migrate.png)
+
+Labels Screen
+![Slices Screen](./assets/ciderpress-screen4-labels.png)
+
+NotebookLM Screen
+![Slices Screen](./assets/ciderpress-screen5-NotebookLM.png)
+
+Settings Screen
+![Slices Screen](./assets/ciderpress-screen6-settings.png)
+
+
+
+Also review the text of the video walk through
+
+https://share.descript.com/view/kJEUejW4cRU
+
+
+
+Now please go find between 15 and 55 places where people are discussing similar topics where I can post to let people know about this app.  When you find such a place please create a post for me by customizing it to that specific discussion or location. Obviously look through Reddit but also other places. 
 
 ## Features
 

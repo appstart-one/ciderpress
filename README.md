@@ -9,13 +9,17 @@ CiderPress is designed for people who journal using audio recordings. For those 
 
 ## Videos
 CiderPress Walk thru
+
 [![CiderPress Walk thru](https://img.youtube.com/vi/GqkIERU-yRc/0.jpg)](https://www.youtube.com/watch?v=GqkIERU-yRc)
 
+
 CiderPress Installation Steps (2 minutes, how to enable)
+
 [![CiderPress Installation Steps](https://img.youtube.com/vi/mJyhGngpzuA/0.jpg)](https://www.youtube.com/watch?v=mJyhGngpzuA)
 
 
 Just for fun: CiderPress Description animation
+
 [![CiderPress Description animation](https://img.youtube.com/vi/NNW_khqRv4I/0.jpg)](https://www.youtube.com/watch?v=NNW_khqRv4I)
 
 

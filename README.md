@@ -1,6 +1,7 @@
-# CiderPress - Voice Memo Liberator
+# CiderPress - Create your Audio Journal
+### Journal with Apple's Voice Memo, Transcribe and then Talk to your journal, generate podcasts and more
 
-> **New user?** See the [Quick Start Guide](QUICKSTART.md) to get up and running.
+<!-- > **New user?** See the [Quick Start Guide](QUICKSTART.md) to get up and running. -->
 
 CiderPress, which lets you copy Apple Voice memos into your own space where you can transcribe, view, export and more one at a time or many. Then you can once click upload them to Google's notebook LM Where they can come alive when you ask questions of your journal, have a discussion, generate infographics, and/or have a podcast about any part of your journal you specify. 
 
@@ -10,7 +11,11 @@ The audience for CiderPress is meant to be people who journal by making audio re
 CiderPress Walk thru
 [![CiderPress Walk thru](https://img.youtube.com/vi/GqkIERU-yRc/0.jpg)](https://www.youtube.com/watch?v=GqkIERU-yRc)
 
-CiderPress Description animation
+CiderPress Installation Steps (2 minutes, how to enable)
+[![CiderPress Installation Steps](https://img.youtube.com/vi/mJyhGngpzuA/0.jpg)](https://www.youtube.com/watch?v=mJyhGngpzuA)
+
+
+Just for fun: CiderPress Description animation
 [![CiderPress Description animation](https://img.youtube.com/vi/NNW_khqRv4I/0.jpg)](https://www.youtube.com/watch?v=NNW_khqRv4I)
 
 

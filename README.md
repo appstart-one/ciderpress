@@ -44,7 +44,8 @@ Settings Screen
 ![Slices Screen](./assets/ciderpress-screen6-settings.png)
 
 # Download CiderPress
-[Download CiderPress latest release](]https://github.com/appstart-one/ciderpress/releases)
+[Download CiderPress latest release](]https://github.com/appstart-one/ciderpress/releases)  
+https://github.com/appstart-one/ciderpress/releases
 
 Also review the text of the video walk through
 

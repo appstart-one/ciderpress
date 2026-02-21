@@ -48,6 +48,32 @@ import { QuillEditor } from '../components/QuillEditor';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { DraggableCard } from '../components/DraggableCard';
 
+// Deseret alphabet Easter egg: Latin-to-Deseret character substitution
+const DESERET_MAP: Record<string, string> = {
+  // Uppercase
+  A: '\uD801\uDC08', B: '\uD801\uDC12', C: '\uD801\uDC17', D: '\uD801\uDC14',
+  E: '\uD801\uDC07', F: '\uD801\uDC19', G: '\uD801\uDC18', H: '\uD801\uDC10',
+  I: '\uD801\uDC06', J: '\uD801\uDC16', K: '\uD801\uDC17', L: '\uD801\uDC22',
+  M: '\uD801\uDC23', N: '\uD801\uDC24', O: '\uD801\uDC04', P: '\uD801\uDC11',
+  Q: '\uD801\uDC17', R: '\uD801\uDC21', S: '\uD801\uDC1D', T: '\uD801\uDC13',
+  U: '\uD801\uDC0B', V: '\uD801\uDC1A', W: '\uD801\uDC0E', X: '\uD801\uDC17',
+  Y: '\uD801\uDC0F', Z: '\uD801\uDC1E',
+  // Lowercase
+  a: '\uD801\uDC30', b: '\uD801\uDC3A', c: '\uD801\uDC3F', d: '\uD801\uDC3C',
+  e: '\uD801\uDC2F', f: '\uD801\uDC41', g: '\uD801\uDC40', h: '\uD801\uDC38',
+  i: '\uD801\uDC2E', j: '\uD801\uDC3E', k: '\uD801\uDC3F', l: '\uD801\uDC4A',
+  m: '\uD801\uDC4B', n: '\uD801\uDC4C', o: '\uD801\uDC2C', p: '\uD801\uDC39',
+  q: '\uD801\uDC3F', r: '\uD801\uDC49', s: '\uD801\uDC45', t: '\uD801\uDC3B',
+  u: '\uD801\uDC2D', v: '\uD801\uDC42', w: '\uD801\uDC36', x: '\uD801\uDC3F',
+  y: '\uD801\uDC37', z: '\uD801\uDC46',
+};
+
+const toDeseret = (text: string): string =>
+  Array.from(text).map(ch => DESERET_MAP[ch] ?? ch).join('');
+
+const toDeseretHtml = (html: string): string =>
+  html.replace(/([^<>]+)(?=<|$)/g, (match) => toDeseret(match));
+
 interface Slice {
   id: number;
   original_audio_file_name: string;
@@ -129,6 +155,10 @@ export default function Slices() {
   const [addSliceOpened, { open: openAddSlice, close: closeAddSlice }] = useDisclosure(false);
   const [newSliceTitle, setNewSliceTitle] = useState('');
   const [newSliceContent, setNewSliceContent] = useState('');
+
+  // Deseret alphabet Easter egg state (display-only, resets on app restart)
+  const [deseretMode, setDeseretMode] = useState(false);
+  const [deseretModalOpened, { open: openDeseretModal, close: closeDeseretModal }] = useDisclosure(false);
 
   // NLM (NotebookLM) upload tracking
   // Stored as { [sliceId]: { audio: boolean, text: boolean } }
@@ -217,6 +247,24 @@ export default function Slices() {
   useEffect(() => { try { localStorage.setItem('slices_pageSize', String(pageSize)); } catch {} }, [pageSize]);
   useEffect(() => { try { localStorage.setItem('slices_sortField', sortField); } catch {} }, [sortField]);
   useEffect(() => { try { localStorage.setItem('slices_sortDir', sortDirection); } catch {} }, [sortDirection]);
+
+  // Deseret alphabet Easter egg trigger
+  useEffect(() => {
+    if (!deseretMode && searchTerm.trim().toLowerCase() === 'day of defense') {
+      setDeseretMode(true);
+      openDeseretModal();
+    }
+  }, [searchTerm]);
+
+  // Helper to conditionally convert text to Deseret
+  const d = (text: string | null | undefined): string => {
+    if (!text) return text ?? '';
+    return deseretMode ? toDeseret(text) : text;
+  };
+  const dHtml = (html: string | null | undefined): string => {
+    if (!html) return html ?? '';
+    return deseretMode ? toDeseretHtml(html) : html;
+  };
 
   useEffect(() => {
     loadSlices();
@@ -1166,13 +1214,13 @@ export default function Slices() {
             title="Click to edit title"
             c={slice.title ? undefined : 'dimmed'}
           >
-            {slice.title || '(No title)'}
+            {d(slice.title || '(No title)')}
           </Text>
         );
       case 'audio_file_size':
-        return <Text size="sm">{formatFileSize(slice.audio_file_size)}</Text>;
+        return <Text size="sm">{d(formatFileSize(slice.audio_file_size))}</Text>;
       case 'audio_file_type':
-        return <Text size="sm">{slice.audio_file_type}</Text>;
+        return <Text size="sm">{d(slice.audio_file_type)}</Text>;
       case 'audio_time_length_seconds':
         return <Text size="sm">{formatAudioLength(slice.audio_time_length_seconds)}</Text>;
       case 'recording_date':
@@ -1180,7 +1228,7 @@ export default function Slices() {
       case 'transcribed':
         return (
           <Badge color={getStatusColor(slice)} variant="light">
-            {getStatusText(slice)}
+            {d(getStatusText(slice))}
           </Badge>
         );
       case 'nlm_status': {
@@ -1238,7 +1286,7 @@ export default function Slices() {
     <Container size="xl">
       <Stack gap="lg">
         <Group justify="space-between">
-          <Title order={2}>Voice Memo Slices</Title>
+          <Title order={2}>{d('Voice Memo Slices')}</Title>
           
           <Group>
             <Select
@@ -1521,23 +1569,25 @@ export default function Slices() {
           {editingSlice && (
             <Stack gap="md">
               <TextInput
-                label="Filename"
-                value={editingSlice.original_audio_file_name}
-                onChange={(e) => setEditingSlice({
-                  ...editingSlice,
-                  original_audio_file_name: e.currentTarget.value
-                })}
+                label={d("Filename")}
+                value={d(editingSlice.original_audio_file_name)}
+                onChange={(e) => {
+                  if (!deseretMode) setEditingSlice({
+                    ...editingSlice,
+                    original_audio_file_name: e.currentTarget.value
+                  });
+                }}
               />
 
               <div>
-                <Text size="sm" fw={500} mb="xs">Transcription</Text>
+                <Text size="sm" fw={500} mb="xs">{d('Transcription')}</Text>
                 <QuillEditor
-                  value={editingSlice.transcription || ''}
+                  value={dHtml(editingSlice.transcription || '')}
                   onChange={(value) => setEditingSlice({
                     ...editingSlice,
-                    transcription: value
+                    transcription: deseretMode ? editingSlice.transcription : value
                   })}
-                  placeholder="Enter or edit transcription..."
+                  placeholder={d("Enter or edit transcription...")}
                   minHeight={250}
                 />
               </div>
@@ -1624,7 +1674,7 @@ export default function Slices() {
                     <Table.Tr>
                       <Table.Td fw={600}>transcription</Table.Td>
                       <Table.Td style={{ maxWidth: '400px', wordWrap: 'break-word' }}>
-                        {debugSlice.transcription || 'null'}
+                        {d(debugSlice.transcription || 'null')}
                       </Table.Td>
                     </Table.Tr>
                     <Table.Tr>
@@ -1868,7 +1918,32 @@ export default function Slices() {
             </Button>
           </Stack>
         </Modal>
+
+        {/* Deseret Alphabet Easter Egg Modal */}
+        <Modal
+          opened={deseretModalOpened}
+          onClose={closeDeseretModal}
+          title={toDeseret('Day of Defense')}
+          centered
+          size="md"
+        >
+          <Stack gap="md" align="center" py="md">
+            <Text size="xl" ta="center" style={{ fontFamily: 'serif' }}>
+              {toDeseret('All text has been updated to use the Deseret Alphabet!')}
+            </Text>
+            <Text size="sm" c="dimmed" ta="center">
+              The Deseret alphabet was developed in the 1850s by the University of Deseret
+              (now the University of Utah) as a phonetic English writing system.
+            </Text>
+            <Text size="xs" c="dimmed" ta="center">
+              Restart the app to restore the original text.
+            </Text>
+            <Button onClick={closeDeseretModal} variant="light">
+              {toDeseret('OK')}
+            </Button>
+          </Stack>
+        </Modal>
       </Stack>
     </Container>
   );
-} 
+}

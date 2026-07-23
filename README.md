@@ -44,16 +44,13 @@ Settings Screen
 ![Slices Screen](./assets/ciderpress-screen6-settings.png)
 
 # Download CiderPress
-[Download CiderPress latest release](]https://github.com/appstart-one/ciderpress/releases)  
+
+[Download CiderPress latest release](https://github.com/appstart-one/ciderpress/releases)  
 https://github.com/appstart-one/ciderpress/releases
 
 Also review the text of the video walk through
 
 https://share.descript.com/view/kJEUejW4cRU
-
-
-
-Now please go find between 15 and 55 places where people are discussing similar topics where I can post to let people know about this app.  When you find such a place please create a post for me by customizing it to that specific discussion or location. Obviously look through Reddit but also other places. 
 
 ## Features
 
@@ -61,6 +58,48 @@ Now please go find between 15 and 55 places where people are discussing similar 
 - **Migration**: Copy voice memos from Apple's database to CiderPress
 - **Statistics**: View analytics about your voice memo collection
 - **Slices**: Browse, search, transcribe, and export your voice memos
+
+## Requirements
+
+- macOS 11.0+ (Big Sur or later)
+- A one-time folder selection to read Apple's Voice Memos database — CiderPress prompts you to choose the Voice Memos folder on first run, which grants read access to just that folder
+- Disk space for Whisper models (downloaded on first use — see table below)
+- A Chromium-based browser (Chrome, Brave, Edge) with a signed-in Google profile — only if using the NotebookLM integration
+
+### What's Bundled (No Installation Required)
+
+| Component | How It's Bundled | Notes |
+|---|---|---|
+| FFmpeg | Statically linked via `ffmpeg-next` | Used for audio duration detection and M4A-to-WAV conversion |
+| SQLite 3 | Statically linked via `rusqlite` | Used for the local recordings and transcripts database |
+| NLM binary | Tauri sidecar | Optional — only used for NotebookLM integration |
+| Metal / CoreAudio | macOS system frameworks | Built-in on all supported macOS versions |
+
+### Whisper Model Sizes
+
+Models are downloaded automatically to `~/.cache/huggingface/` the first time you run a transcription. Choose a model in Settings based on your speed/accuracy needs:
+
+| Model | Disk Size | Best For |
+|---|---|---|
+| tiny / tiny.en | ~43 MB | Fastest, lower accuracy |
+| base / base.en | ~78 MB | Good balance for short memos |
+| small / small.en | ~244 MB | Better accuracy, still fast |
+| medium / medium.en | ~769 MB | High accuracy |
+| large-v3-turbo | ~1.6 GB | Near-best accuracy, optimized speed |
+| large-v3 | ~3.1 GB | Best accuracy, slowest |
+
+## Security & Privacy
+
+- Only copies data; never deletes or edits Apple originals
+- All data stored locally in user's home directory
+- No network calls except Whisper model downloads (one-time, on first transcription)
+- Proper file permissions (0o700 for directories, 0o600 for files)
+
+---
+
+# For Developers & Technical Users
+
+Everything below this line is aimed at developers and technically-minded users: how the app is built, how to build and run it from source, and how it works internally. If you just want to use CiderPress, everything you need is above.
 
 ## Tech Stack
 
@@ -102,35 +141,6 @@ ciderpress/
 ├── tailwind.config.js   # Tailwind configuration
 └── tsconfig.json        # TypeScript configuration
 ```
-
-## Requirements
-
-- macOS 11.0+ (Big Sur or later)
-- A one-time folder selection to read Apple's Voice Memos database — CiderPress prompts you to choose the Voice Memos folder on first run, which grants read access to just that folder
-- Disk space for Whisper models (downloaded on first use — see table below)
-- A Chromium-based browser (Chrome, Brave, Edge) with a signed-in Google profile — only if using the NotebookLM integration
-
-### What's Bundled (No Installation Required)
-
-| Component | How It's Bundled | Notes |
-|---|---|---|
-| FFmpeg | Statically linked via `ffmpeg-next` | Used for audio duration detection and M4A-to-WAV conversion |
-| SQLite 3 | Statically linked via `rusqlite` | Used for the local recordings and transcripts database |
-| NLM binary | Tauri sidecar | Optional — only used for NotebookLM integration |
-| Metal / CoreAudio | macOS system frameworks | Built-in on all supported macOS versions |
-
-### Whisper Model Sizes
-
-Models are downloaded automatically to `~/.cache/huggingface/` the first time you run a transcription. Choose a model in Settings based on your speed/accuracy needs:
-
-| Model | Disk Size | Best For |
-|---|---|---|
-| tiny / tiny.en | ~43 MB | Fastest, lower accuracy |
-| base / base.en | ~78 MB | Good balance for short memos |
-| small / small.en | ~244 MB | Better accuracy, still fast |
-| medium / medium.en | ~769 MB | High accuracy |
-| large-v3-turbo | ~1.6 GB | Near-best accuracy, optimized speed |
-| large-v3 | ~3.1 GB | Best accuracy, slowest |
 
 ## Development Setup
 
@@ -259,10 +269,3 @@ The Rust backend exposes these Tauri commands:
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
 You are free to use, modify, and distribute this software under the terms of the GPL v3.0. Any derivative works must also be licensed under GPL v3.0.
-
-## Security & Privacy
-
-- Only copies data; never deletes or edits Apple originals
-- All data stored locally in user's home directory
-- No network calls except Whisper model downloads (one-time, on first transcription)
-- Proper file permissions (0o700 for directories, 0o600 for files) 

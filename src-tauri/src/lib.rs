@@ -911,10 +911,37 @@ async fn download_whisper_model(model_name: String) -> Result<(), ApiError> {
 }
 
 #[tauri::command]
-async fn pick_directory() -> Result<Option<String>, ApiError> {
-    // For now, return None - this will be implemented with the dialog plugin
-    // TODO: Implement with tauri-plugin-dialog
-    Ok(None)
+async fn pick_directory(
+    app: tauri::AppHandle,
+    initial_dir: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let mut builder = app
+        .dialog()
+        .file()
+        .set_title("Select the Apple Voice Memos Recordings folder");
+    // Pre-fill unconditionally: the open panel runs in a separate OS process
+    // that can navigate MACL-protected locations we can't stat ourselves.
+    if let Some(dir) = initial_dir.filter(|d| !d.is_empty()) {
+        builder = builder.set_directory(dir);
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    builder.pick_folder(move |folder| {
+        let _ = tx.send(folder);
+    });
+
+    let folder = tokio::task::spawn_blocking(move || rx.recv().ok().flatten())
+        .await
+        .map_err(|e| ApiError {
+            message: format!("Folder picker task failed: {}", e),
+            kind: "DialogError".to_string(),
+        })?;
+
+    Ok(folder
+        .and_then(|f| f.into_path().ok())
+        .map(|p| p.to_string_lossy().to_string()))
 }
 
 #[tauri::command]

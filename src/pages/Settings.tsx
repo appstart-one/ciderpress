@@ -37,7 +37,7 @@ import {
   Transition,
   ThemeIcon
 } from '@mantine/core';
-import { IconCheck, IconX, IconInfoCircle, IconDownload, IconShieldLock, IconLock } from '@tabler/icons-react';
+import { IconCheck, IconX, IconInfoCircle, IconDownload, IconShieldLock, IconLock, IconFolderOpen } from '@tabler/icons-react';
 import { DraggableCard } from '../components/DraggableCard';
 
 interface ModelDownloadProgress {
@@ -206,6 +206,33 @@ export default function Settings() {
     }
   };
 
+  const chooseVoiceMemoFolder = async () => {
+    try {
+      const selected = await invoke<string | null>('pick_directory', {
+        initialDir: config.voice_memo_root,
+      });
+      if (!selected) return;
+
+      const updatedConfig = { ...config, voice_memo_root: selected };
+      setConfig(updatedConfig);
+      await invoke('update_config', { newConfig: updatedConfig });
+      await validatePaths();
+      notifications.show({
+        title: 'Folder Selected',
+        message: 'CiderPress now has access to the selected folder',
+        color: 'green',
+        icon: <IconCheck size={16} />,
+      });
+    } catch (error) {
+      notifications.show({
+        title: 'Error',
+        message: `Failed to select folder: ${error}`,
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
   const saveConfig = async () => {
     setIsLoading(true);
 
@@ -334,14 +361,29 @@ export default function Settings() {
           <Stack gap="md">
             <Title order={3}>Paths</Title>
             
-            <TextInput
-              label="Voice Memo Root Directory"
-              description="Path to Apple's Voice Memos directory (contains CloudRecordings.db)"
-              placeholder="/Users/yourname/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings"
-              value={config.voice_memo_root}
-              onChange={(e) => setConfig({ ...config, voice_memo_root: e.target.value })}
-              required
-            />
+            <Group align="flex-end" gap="sm" wrap="nowrap">
+              <TextInput
+                label="Voice Memo Root Directory"
+                description="Path to Apple's Voice Memos directory (contains CloudRecordings.db)"
+                placeholder="/Users/yourname/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings"
+                value={config.voice_memo_root}
+                onChange={(e) => setConfig({ ...config, voice_memo_root: e.target.value })}
+                required
+                style={{ flex: 1 }}
+              />
+              <Button
+                variant="light"
+                leftSection={<IconFolderOpen size={16} />}
+                onClick={chooseVoiceMemoFolder}
+              >
+                Choose Folder…
+              </Button>
+            </Group>
+            <Text size="xs" c="dimmed">
+              Selecting the folder in the dialog grants CiderPress read access to just that
+              folder — no Full Disk Access needed. The dialog opens at the Voice Memos
+              location; click Open to approve access.
+            </Text>
 
             <TextInput
               label="CiderPress Home Directory"

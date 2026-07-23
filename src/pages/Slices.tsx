@@ -147,6 +147,9 @@ export default function Slices() {
   const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
     try { return (localStorage.getItem('slices_sortDir') as SortDirection) || 'asc'; } catch { return 'asc'; }
   });
+  const [statusFilter, setStatusFilter] = useState<'all' | 'transcribed' | 'untranscribed' | 'failed'>(() => {
+    try { return (localStorage.getItem('slices_statusFilter') as 'all' | 'transcribed' | 'untranscribed' | 'failed') || 'all'; } catch { return 'all'; }
+  });
   const [editingSlice, setEditingSlice] = useState<Slice | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
   const [editingTitleValue, setEditingTitleValue] = useState<string>('');
@@ -258,6 +261,7 @@ export default function Slices() {
   useEffect(() => { try { localStorage.setItem('slices_pageSize', String(pageSize)); } catch {} }, [pageSize]);
   useEffect(() => { try { localStorage.setItem('slices_sortField', sortField); } catch {} }, [sortField]);
   useEffect(() => { try { localStorage.setItem('slices_sortDir', sortDirection); } catch {} }, [sortDirection]);
+  useEffect(() => { try { localStorage.setItem('slices_statusFilter', statusFilter); } catch {} }, [statusFilter]);
 
   // Deseret alphabet Easter egg trigger
   useEffect(() => {
@@ -471,7 +475,7 @@ export default function Slices() {
   // Reset page when search or sort changes (but not on data refresh)
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, sortField, sortDirection]);
+  }, [searchTerm, sortField, sortDirection, statusFilter]);
 
   useEffect(() => {
     // Apply filtering, sorting and pagination when data or search term changes
@@ -483,6 +487,19 @@ export default function Slices() {
         (slice.title && slice.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (slice.transcription && slice.transcription.toLowerCase().includes(searchTerm.toLowerCase()))
       );
+    }
+
+    // Apply status filter. Buckets mirror the status badge (getStatusText/getStatusColor),
+    // which classify a slice using only `slice.transcribed` (transcribing state is transient).
+    // The badge has no "failed" state and Slice carries no error field, so 'failed' matches
+    // nothing today; update this predicate if an error/failed field is added later.
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(slice => {
+        if (statusFilter === 'transcribed') return slice.transcribed;       // green "Transcribed"
+        if (statusFilter === 'untranscribed') return !slice.transcribed;    // gray "Audio" (no transcription)
+        if (statusFilter === 'failed') return false;                        // no errored-attempt field exists
+        return true;
+      });
     }
 
     // Apply sorting
@@ -511,7 +528,7 @@ export default function Slices() {
     });
 
     setFilteredSlices(filtered);
-  }, [slices, searchTerm, sortField, sortDirection]);
+  }, [slices, searchTerm, sortField, sortDirection, statusFilter]);
 
   const loadSlices = async () => {
     setLoading(true);
@@ -1352,6 +1369,18 @@ export default function Slices() {
               label="Search"
               w={300}
             />
+            <Select
+              value={statusFilter}
+              onChange={(value) => setStatusFilter((value as 'all' | 'transcribed' | 'untranscribed' | 'failed') || 'all')}
+              data={[
+                { value: 'all', label: 'All' },
+                { value: 'transcribed', label: 'Transcribed' },
+                { value: 'untranscribed', label: 'Not transcribed' },
+                { value: 'failed', label: 'Failed' },
+              ]}
+              label="Status"
+              w={160}
+            />
             <Popover position="bottom-end" withArrow shadow="md">
               <Popover.Target>
                 <ActionIcon variant="light" size="lg" mt={24} title="Toggle Columns">
@@ -1586,15 +1615,20 @@ export default function Slices() {
             </Table.Tbody>
           </Table>
 
-          {totalPages > 1 && (
-            <Group justify="center" p="md">
+          <Group justify="center" p="md" gap="xs">
+            {totalPages > 1 && (
               <Pagination
                 value={currentPage}
                 onChange={setCurrentPage}
                 total={totalPages}
               />
-            </Group>
-          )}
+            )}
+            <Text size="sm" c="dimmed">
+              {filteredSlices.length === 0
+                ? 'No slices match'
+                : `Showing ${(currentPage - 1) * pageSize + 1}–${Math.min(currentPage * pageSize, filteredSlices.length)} of ${filteredSlices.length} slices`}
+            </Text>
+          </Group>
         </Paper>
 
         <Modal

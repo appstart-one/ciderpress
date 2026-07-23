@@ -16,6 +16,7 @@
 
 use anyhow::Result;
 use rusqlite::{Connection, params};
+use std::collections::HashMap;
 use std::path::Path;
 
 use super::models::{Recording, Transcript, RecordingWithTranscript, Stats, YearCount, AudioLengthBucket, Slice, Label};
@@ -116,6 +117,19 @@ impl Database {
             [],
         )?;
 
+        // Create slice_labels association table (slice <-> label many-to-many).
+        // Auto-labeling inserts rows here when a label's keywords match a slice's transcription.
+        self.conn.execute(
+            r#"
+            CREATE TABLE IF NOT EXISTS slice_labels (
+                slice_id INTEGER NOT NULL,
+                label_id INTEGER NOT NULL,
+                PRIMARY KEY (slice_id, label_id)
+            )
+            "#,
+            [],
+        )?;
+
         // Add title column to existing slices tables (migration)
         let _ = self.conn.execute(
             "ALTER TABLE slices ADD COLUMN title TEXT",
@@ -136,6 +150,11 @@ impl Database {
 
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_slices_filename ON slices(original_audio_file_name)",
+            [],
+        )?;
+
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_slice_labels_slice ON slice_labels(slice_id)",
             [],
         )?;
 
@@ -632,6 +651,9 @@ impl Database {
                 slice_id,
             ],
         )?;
+
+        // Auto-apply labels whose keywords match the freshly-transcribed text.
+        self.apply_auto_labels(slice_id, transcription)?;
         Ok(())
     }
 
@@ -732,7 +754,12 @@ impl Database {
         if rows_affected == 0 {
             return Err(anyhow::anyhow!("Failed to update slice: no rows affected"));
         }
-        
+
+        // Auto-apply labels when a slice's transcription is viewed/edited and saved.
+        if let Some(text) = slice.transcription.as_deref() {
+            self.apply_auto_labels(slice_id, text)?;
+        }
+
         Ok(())
     }
 
@@ -1046,6 +1073,12 @@ impl Database {
     }
 
     pub fn delete_label(&self, id: i64) -> Result<()> {
+        // Remove any slice associations for this label first so no orphan rows remain.
+        self.conn.execute(
+            "DELETE FROM slice_labels WHERE label_id = ?1",
+            params![id],
+        )?;
+
         let rows_affected = self.conn.execute(
             "DELETE FROM labels WHERE id = ?1",
             params![id],
@@ -1055,6 +1088,75 @@ impl Database {
             return Err(anyhow::anyhow!("No label found with ID: {}", id));
         }
         Ok(())
+    }
+
+    /// Auto-apply labels to a slice by matching each label's keywords against the given text.
+    ///
+    /// Matching semantics: a label's `keywords` string is split on commas, each phrase is
+    /// trimmed, and empty phrases are ignored. Each phrase is matched case-insensitively as a
+    /// substring of `text`. If ANY phrase of a label matches, that label is applied to the slice.
+    ///
+    /// Reconciliation: this only ever ADDS associations (INSERT OR IGNORE). It never removes
+    /// labels, so re-transcribing or re-saving a slice reconciles by adding any newly matching
+    /// labels while preserving previously applied ones.
+    pub fn apply_auto_labels(&self, slice_id: i64, text: &str) -> Result<()> {
+        let text_lower = text.to_lowercase();
+        let labels = self.list_labels()?;
+
+        for label in labels {
+            let label_id = match label.id {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let matched = label
+                .keywords
+                .split(',')
+                .map(|phrase| phrase.trim())
+                .filter(|phrase| !phrase.is_empty())
+                .any(|phrase| text_lower.contains(&phrase.to_lowercase()));
+
+            if matched {
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO slice_labels (slice_id, label_id) VALUES (?1, ?2)",
+                    params![slice_id, label_id],
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Fetch all slice -> labels associations as a map keyed by slice_id.
+    /// Returned in a single query so the Slices screen can render label badges with one round trip.
+    pub fn get_labels_for_all_slices(&self) -> Result<HashMap<i64, Vec<Label>>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT sl.slice_id, l.id, l.name, l.color, l.keywords
+            FROM slice_labels sl
+            JOIN labels l ON l.id = sl.label_id
+            ORDER BY sl.slice_id, l.id
+            "#,
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                Label {
+                    id: Some(row.get(1)?),
+                    name: row.get(2)?,
+                    color: row.get(3)?,
+                    keywords: row.get(4)?,
+                },
+            ))
+        })?;
+
+        let mut map: HashMap<i64, Vec<Label>> = HashMap::new();
+        for row in rows {
+            let (slice_id, label) = row?;
+            map.entry(slice_id).or_default().push(label);
+        }
+        Ok(map)
     }
 }
 

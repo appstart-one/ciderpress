@@ -90,6 +90,13 @@ interface Slice {
   recording_date: number | null; // Unix timestamp of original recording
 }
 
+interface Label {
+  id: number | null;
+  name: string;
+  color: string;
+  keywords: string;
+}
+
 interface TranscriptionProgress {
   total_slices: number;
   completed_slices: number;
@@ -112,6 +119,8 @@ type SortDirection = 'asc' | 'desc';
 
 export default function Slices() {
   const [slices, setSlices] = useState<Slice[]>([]);
+  // Auto-generated labels per slice, keyed by slice id (from get_slice_labels)
+  const [sliceLabels, setSliceLabels] = useState<Record<number, Label[]>>({});
   const [filteredSlices, setFilteredSlices] = useState<Slice[]>([]);
   const [loading, setLoading] = useState(true);
   // Restore view state from localStorage to survive route changes
@@ -178,6 +187,7 @@ export default function Slices() {
     audio_time_length_seconds: true,
     recording_date: true,
     transcribed: true,
+    labels: true,
     nlm_status: true,
   });
 
@@ -189,6 +199,7 @@ export default function Slices() {
     { key: 'audio_time_length_seconds', label: 'Audio Length' },
     { key: 'recording_date', label: 'Date' },
     { key: 'transcribed', label: 'Status' },
+    { key: 'labels', label: 'Labels' },
     { key: 'nlm_status', label: 'NLM' },
   ]);
 
@@ -507,6 +518,12 @@ export default function Slices() {
     try {
       const data = await invoke<Slice[]>('get_slice_records');
       setSlices(data);
+      try {
+        const labelsMap = await invoke<Record<number, Label[]>>('get_slice_labels');
+        setSliceLabels(labelsMap);
+      } catch (labelError) {
+        console.error('Failed to load slice labels:', labelError);
+      }
     } catch (error) {
       notifications.show({
         title: 'Error',
@@ -1231,6 +1248,26 @@ export default function Slices() {
             {d(getStatusText(slice))}
           </Badge>
         );
+      case 'labels': {
+        const labels = sliceLabels[slice.id] || [];
+        if (labels.length === 0) {
+          return <Text size="xs" c="dimmed">-</Text>;
+        }
+        return (
+          <Group gap={4}>
+            {labels.map((label) => (
+              <Badge
+                key={label.id ?? label.name}
+                color={label.color}
+                variant="light"
+                size="sm"
+              >
+                {label.name}
+              </Badge>
+            ))}
+          </Group>
+        );
+      }
       case 'nlm_status': {
         const upload = nlmUploads[slice.id];
         if (!upload || (!upload.audio && !upload.text)) {

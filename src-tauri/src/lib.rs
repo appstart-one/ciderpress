@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::path::PathBuf;
 use tauri::{State, AppHandle, Emitter, Manager};
@@ -1376,6 +1377,23 @@ async fn delete_label(state: State<'_, AppState>, id: i64) -> Result<(), ApiErro
     db.delete_label(id).map_err(ApiError::from)
 }
 
+#[tauri::command]
+async fn get_slice_labels(
+    state: State<'_, AppState>,
+) -> Result<HashMap<i64, Vec<Label>>, ApiError> {
+    let db_guard = state.db.lock().map_err(|e| ApiError {
+        message: format!("Failed to lock database: {}", e),
+        kind: "LockError".to_string(),
+    })?;
+
+    let db = db_guard.as_ref().ok_or_else(|| ApiError {
+        message: "Database not initialized".to_string(),
+        kind: "DatabaseError".to_string(),
+    })?;
+
+    db.get_labels_for_all_slices().map_err(ApiError::from)
+}
+
 // ==================== Logging commands ====================
 
 #[derive(serde::Deserialize)]
@@ -1747,6 +1765,7 @@ pub fn run() {
             create_label,
             update_label,
             delete_label,
+            get_slice_labels,
             log_user_action,
             nlm_get_status,
             nlm_authenticate,

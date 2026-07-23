@@ -70,11 +70,15 @@ npm run tauri build -- --target universal-apple-darwin
 echo ""
 echo "--- Step 4: Re-sign universal app bundle ---"
 # The lipo step in universal builds can strip/invalidate signatures.
-# Re-sign with ad-hoc identity to ensure proper code signing for FDA.
+# Re-sign with the same stable Developer ID identity as tauri.conf.json:
+# the macOS folder-access grant (com.apple.macl) binds to the signing
+# identity, so an ad-hoc re-sign here would make users re-grant access
+# after every update. Override with SIGNING_IDENTITY=... if needed.
+SIGNING_IDENTITY="${SIGNING_IDENTITY:-$(python3 -c "import json; print(json.load(open('$PROJECT_ROOT/src-tauri/tauri.conf.json'))['bundle']['macOS']['signingIdentity'])")}"
 APP_BUNDLE="$PROJECT_ROOT/src-tauri/target/universal-apple-darwin/release/bundle/macos/CiderPress.app"
 if [ -d "$APP_BUNDLE" ]; then
-    codesign --force --sign - --deep "$APP_BUNDLE"
-    echo "  Signed: $APP_BUNDLE"
+    codesign --force --options runtime --sign "$SIGNING_IDENTITY" --deep "$APP_BUNDLE"
+    echo "  Signed: $APP_BUNDLE (identity: $SIGNING_IDENTITY)"
 else
     echo "  Warning: App bundle not found at $APP_BUNDLE, skipping re-sign"
 fi

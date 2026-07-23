@@ -42,7 +42,7 @@
       "binaries/nlm"
     ],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "Developer ID Application: Brendan Patterson (S7YK4WFXW4)"
     }
   }
 }

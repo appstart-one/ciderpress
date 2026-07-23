@@ -182,6 +182,20 @@ npm run tauri dev
 
 This will start both the Vite dev server and the Tauri application.
 
+### Linting & Formatting
+
+Fast local feedback before committing frontend changes:
+
+```bash
+npm run lint          # ESLint over src/ (React hooks, TypeScript rules)
+npm run lint:fix      # Same, with autofix
+npm run typecheck     # tsc --noEmit
+npm run format        # Prettier --write over src/
+npm run format:check  # Prettier check only
+```
+
+Hook-dependency and unused-code findings are reported as warnings for now; Rust code is linted separately with `cargo clippy`.
+
 ### Building
 
 Build for production:

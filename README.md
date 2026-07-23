@@ -106,7 +106,7 @@ ciderpress/
 ## Requirements
 
 - macOS 11.0+ (Big Sur or later)
-- **Full Disk Access** permission (macOS 12+) to read Apple's Voice Memos database
+- A one-time folder selection to read Apple's Voice Memos database — CiderPress prompts you to choose the Voice Memos folder on first run, which grants read access to just that folder
 - Disk space for Whisper models (downloaded on first use — see table below)
 - A Chromium-based browser (Chrome, Brave, Edge) with a signed-in Google profile — only if using the NotebookLM integration
 

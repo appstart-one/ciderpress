@@ -43,19 +43,17 @@ Because CiderPress is not yet signed with an Apple Developer certificate, macOS 
 
 CiderPress needs to read Apple's Voice Memos database, which is stored in a protected system directory. Choose **one** of the two options below.
 
-### Option A: Grant Full Disk Access (Recommended)
+### Option A: Select the Voice Memos Folder (Recommended)
 
-This lets CiderPress read your Voice Memos directly from where Apple stores them.
+This lets CiderPress read your Voice Memos directly from where Apple stores them. Approving the folder in the selection dialog is what grants CiderPress read access to just that folder — nothing else on your disk.
 
-1. Open **System Settings** > **Privacy & Security** > **Full Disk Access**.
-2. Click the **+** button.
-3. Navigate to your **Applications** folder and select **CiderPress**.
-4. Toggle the switch to **on**.
-5. Restart CiderPress if it was already open.
+1. Open **CiderPress**. On first launch it takes you to **Settings** and prompts you to choose your Voice Memos folder. (You can also click **Choose Folder…** on the Settings page at any time.)
+2. The folder dialog opens at Apple's Voice Memos location. Click **Open**.
+3. Done — the access grant persists across restarts.
 
 ### Option B: Manually Copy Your Voice Memos
 
-If you prefer not to grant Full Disk Access, you can copy the files yourself.
+If you prefer, you can copy the files yourself instead.
 
 1. Open **Finder**.
 2. Press **Cmd + Shift + G** and paste this path:

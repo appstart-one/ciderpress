@@ -381,8 +381,8 @@ export default function Settings() {
             </Group>
             <Text size="xs" c="dimmed">
               Selecting the folder in the dialog grants CiderPress read access to just that
-              folder — no Full Disk Access needed. The dialog opens at the Voice Memos
-              location; click Open to approve access.
+              folder — no broader system permissions needed. The dialog opens at the Voice
+              Memos location; click Open to approve access.
             </Text>
 
             <TextInput
@@ -530,7 +530,7 @@ export default function Settings() {
                 {validationStatus === 'Valid'
                   ? 'Apple DB connection successful'
                   : validationStatus === 'PermissionDenied'
-                  ? 'Permission denied — Full Disk Access required'
+                  ? 'Permission denied — select the Voice Memos folder to grant access'
                   : validationStatus === 'NoRecordings'
                   ? 'No voice memo recordings found'
                   : validationStatus === 'NoDatabaseFound'
@@ -539,16 +539,27 @@ export default function Settings() {
               </Text>
             </Group>
             {validationStatus === 'PermissionDenied' && !loading && (
-              <Alert icon={<IconShieldLock size={16} />} title="Full Disk Access Required" color="red" variant="light">
+              <Alert icon={<IconShieldLock size={16} />} title="Grant Access to Voice Memos" color="red" variant="light">
                 <Stack gap="xs">
                   <Text size="sm">
-                    macOS blocked CiderPress from reading the Voice Memos directory. Grant Full Disk Access to fix this:
+                    macOS blocked CiderPress from reading the Voice Memos directory. To grant
+                    access, select the folder yourself — approving it in the dialog is what
+                    gives CiderPress permission to read it.
                   </Text>
-                  <Text size="sm" fw={600}>1. Open System Settings &rarr; Privacy &amp; Security &rarr; Full Disk Access</Text>
-                  <Text size="sm" fw={600}>2. Enable CiderPress in the list</Text>
-                  <Text size="sm" fw={600}>3. Restart CiderPress</Text>
+                  <Text size="sm" fw={600}>1. Click "Select Voice Memos Folder" below</Text>
+                  <Text size="sm" fw={600}>2. The dialog opens at the Voice Memos folder — click Open</Text>
+                  <Button
+                    variant="light"
+                    color="red"
+                    leftSection={<IconFolderOpen size={16} />}
+                    onClick={chooseVoiceMemoFolder}
+                    style={{ alignSelf: 'flex-start' }}
+                  >
+                    Select Voice Memos Folder
+                  </Button>
                   <Text size="sm" c="dimmed" mt="xs">
-                    If CiderPress doesn't appear in the list, click the "+" button and navigate to your Applications folder to add it manually.
+                    You can also edit the path manually in the Paths section above if your
+                    recordings live somewhere else.
                   </Text>
                 </Stack>
               </Alert>

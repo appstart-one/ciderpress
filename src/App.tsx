@@ -14,9 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell, NavLink, Title, Group, ThemeIcon } from '@mantine/core';
 import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconNotebook, IconLock } from '@tabler/icons-react';
+import { invoke } from '@tauri-apps/api/core';
+import { notifications } from '@mantine/notifications';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LockScreen, useLockScreen } from './components/LockScreen';
@@ -59,6 +62,41 @@ function Navigation() {
   );
 }
 
+// On first run (or until Voice Memos access works), route the user to Settings
+// and prompt them to select the Voice Memos folder — selection is what grants
+// scoped read access.
+function FirstRunGuidance() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const config = await invoke<Record<string, unknown> & { first_run_complete: boolean }>('get_config');
+        if (config.first_run_complete) return;
+
+        const result = await invoke<{ status: string }>('validate_paths');
+        if (result.status === 'Valid') {
+          // Access already works — mark setup complete silently.
+          await invoke('update_config', { newConfig: { ...config, first_run_complete: true } });
+          return;
+        }
+
+        navigate('/settings');
+        notifications.show({
+          title: 'Welcome to CiderPress',
+          message: 'Choose your Voice Memos folder in Settings to grant access and get started.',
+          color: 'blue',
+          autoClose: 8000,
+        });
+      } catch {
+        // Backend not ready or config unreadable — Settings page handles it.
+      }
+    })();
+  }, []);
+
+  return null;
+}
+
 function LockNowButton() {
   const { lockNow, isPasswordEnabled } = useLockScreen();
 
@@ -82,6 +120,7 @@ function LockNowButton() {
 function App() {
   return (
     <Router>
+      <FirstRunGuidance />
       <LockScreen>
         <AppShell
           navbar={{

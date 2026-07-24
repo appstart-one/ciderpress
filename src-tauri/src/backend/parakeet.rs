@@ -28,6 +28,65 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// Run control flags (pause / stop for an in-progress transcription run)
+//
+// These live here rather than in `transcribe.rs` because `bin/parakeet_smoke.rs`
+// `#[path]`-includes this file as a self-contained module with no `crate::` /
+// `super::` references. Keeping the atomics + primitive helpers here lets both
+// the library and the smoke binary compile without changing `transcribe()`'s
+// signature. `transcribe.rs` wraps these with the UI-progress-aware helpers the
+// rest of the app calls.
+// ---------------------------------------------------------------------------
+
+static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+static PAUSE_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Request the current run to stop at the next control point.
+pub fn request_stop() {
+    STOP_REQUESTED.store(true, Ordering::SeqCst);
+    // A stop supersedes a pause so a paused run can be stopped.
+    PAUSE_REQUESTED.store(false, Ordering::SeqCst);
+}
+
+/// Request the current run to pause at the next control point.
+pub fn request_pause() {
+    PAUSE_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+/// Resume a paused run.
+pub fn request_resume() {
+    PAUSE_REQUESTED.store(false, Ordering::SeqCst);
+}
+
+/// Clear both control flags (called when a new run starts).
+pub fn reset_control_flags() {
+    STOP_REQUESTED.store(false, Ordering::SeqCst);
+    PAUSE_REQUESTED.store(false, Ordering::SeqCst);
+}
+
+/// True if a stop has been requested.
+pub fn is_stop_requested() -> bool {
+    STOP_REQUESTED.load(Ordering::SeqCst)
+}
+
+/// True if a pause has been requested.
+#[allow(dead_code)]
+pub fn is_pause_requested() -> bool {
+    PAUSE_REQUESTED.load(Ordering::SeqCst)
+}
+
+/// Block while paused (and not stopped), polling every 250 ms. Returns
+/// immediately if not paused. Progress/UI state is managed by the callers in
+/// `transcribe.rs` (via `request_pause`/`request_resume`), so this only sleeps.
+pub fn wait_while_paused() {
+    while PAUSE_REQUESTED.load(Ordering::SeqCst) && !STOP_REQUESTED.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
 
 /// A downloadable Parakeet model definition.
 pub struct ParakeetModel {
@@ -300,6 +359,12 @@ pub fn transcribe(
 
     let mut texts: Vec<String> = Vec::with_capacity(chunks.len());
     for (i, range) in chunks.iter().enumerate() {
+        // Control point: honor pause/stop between chunks. Pause holds here; a
+        // stop abandons the rest of this file (its partial text is discarded).
+        wait_while_paused();
+        if is_stop_requested() {
+            anyhow::bail!("Transcription stopped by user");
+        }
         tracing::info!(
             "Parakeet chunk {}/{}: {:.1}s–{:.1}s",
             i + 1,
@@ -436,6 +501,91 @@ mod tests {
         println!("=== transcribed in {:.2}s ===", elapsed.as_secs_f64());
 
         assert!(!text.trim().is_empty(), "transcript should not be empty");
+        Ok(())
+    }
+
+    #[test]
+    fn test_control_flags_roundtrip() {
+        reset_control_flags();
+        assert!(!is_stop_requested());
+        assert!(!is_pause_requested());
+
+        request_pause();
+        assert!(is_pause_requested());
+        assert!(!is_stop_requested());
+
+        request_resume();
+        assert!(!is_pause_requested());
+
+        request_pause();
+        request_stop();
+        // A stop supersedes a pause so wait_while_paused cannot deadlock.
+        assert!(is_stop_requested());
+        assert!(!is_pause_requested());
+
+        reset_control_flags();
+        assert!(!is_stop_requested());
+        assert!(!is_pause_requested());
+    }
+
+    /// Requests a stop from a second thread partway through a long-file
+    /// transcription and asserts the run terminates early at a chunk boundary
+    /// (clean `Err`, no panic) rather than decoding the whole file.
+    ///
+    /// Needs the Parakeet v2 model downloaded and a long WAV. Uses
+    /// `/tmp/parakeet-long-test.wav` if present. Ignored by default:
+    ///   cargo test stop_mid_run_terminates_early -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn stop_mid_run_terminates_early() -> Result<()> {
+        let model_name = "parakeet-tdt-0.6b-v2";
+        assert!(
+            is_downloaded(model_name),
+            "Parakeet v2 model must be downloaded to run this test"
+        );
+
+        let wav = PathBuf::from("/tmp/parakeet-long-test.wav");
+        assert!(
+            wav.exists(),
+            "long test WAV not found at {:?} (regenerate per the bead)",
+            wav
+        );
+
+        reset_control_flags();
+
+        // Fire the stop shortly after the run starts — mid first/second chunk.
+        let stopper = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(1500));
+            println!("  [stopper] requesting stop");
+            request_stop();
+        });
+
+        let start = std::time::Instant::now();
+        let result = transcribe(model_name, wav.to_str().unwrap(), None);
+        let elapsed = start.elapsed();
+        stopper.join().unwrap();
+        reset_control_flags();
+
+        println!("  run returned after {:.2}s", elapsed.as_secs_f64());
+        match &result {
+            Ok(t) => println!("  UNEXPECTED Ok ({} chars)", t.len()),
+            Err(e) => println!("  Err (expected): {}", e),
+        }
+
+        assert!(result.is_err(), "run should stop early with an error");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("stopped by user"),
+            "error should be the user-stop sentinel, got: {}",
+            msg
+        );
+        // An ~11 min file at real-time-factor ~25 would take ~25s+; a stop at
+        // ~1.5s must terminate far sooner. Generous bound to avoid flakiness.
+        assert!(
+            elapsed < Duration::from_secs(20),
+            "stop did not terminate early (took {:.2}s)",
+            elapsed.as_secs_f64()
+        );
         Ok(())
     }
 

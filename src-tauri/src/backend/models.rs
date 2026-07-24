@@ -123,6 +123,7 @@ pub struct TranscriptionProgress {
     pub estimated_total_seconds: u32,
     pub elapsed_seconds: u32,
     pub is_active: bool,
+    pub is_paused: bool, // true while a pause has been requested and honored
     // Per-slice progress tracking
     pub current_slice_elapsed_seconds: u32,
     pub current_slice_estimated_seconds: u32,

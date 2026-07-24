@@ -473,15 +473,30 @@ async fn transcribe_slices(
 
                 let transcription_engine = TranscriptionEngine::new(&config, &db);
                 for slice_id in filtered_slice_ids {
+                    // Control point between files: hold while paused, then bail
+                    // out of the run entirely if a stop was requested.
+                    backend::transcribe::wait_if_paused();
+                    if backend::transcribe::is_stop_requested() {
+                        tracing::info!("Transcription run stopped by user before slice {}", slice_id);
+                        break;
+                    }
                     // Use the sync version since we're in a blocking context
                     if let Err(e) = transcription_engine.transcribe_slice_sync(slice_id) {
+                        // A user-initiated stop that aborts the in-flight slice
+                        // must NOT be recorded as a failure (the slice stays
+                        // untranscribed, its partial text discarded).
+                        if backend::transcribe::is_stop_requested() {
+                            tracing::info!("Slice {} abandoned due to user stop", slice_id);
+                            break;
+                        }
                         tracing::error!("Failed to transcribe slice {}: {}", slice_id, e);
                         backend::transcribe::mark_slice_failed();
                     } else {
                         backend::transcribe::mark_slice_completed();
                     }
                 }
-                // Mark transcription as complete
+                // Mark transcription as complete (or stopped — either way the
+                // UI returns to idle; completed transcripts are already saved).
                 backend::transcribe::clear_transcription_progress();
             }
             Err(e) => {
@@ -608,6 +623,31 @@ async fn estimate_transcription(
 #[tauri::command]
 async fn get_transcription_progress() -> Result<Option<TranscriptionProgress>, ApiError> {
     Ok(get_transcription_progress_fn())
+}
+
+/// Pause an in-progress transcription run. Work halts at the next control point
+/// (next file / Parakeet chunk / Whisper segment) — a single in-flight
+/// inference call cannot be suspended, so pause takes effect within ~one chunk.
+#[tauri::command]
+async fn pause_transcription() -> Result<(), ApiError> {
+    backend::transcribe::request_pause();
+    Ok(())
+}
+
+/// Resume a paused transcription run.
+#[tauri::command]
+async fn resume_transcription() -> Result<(), ApiError> {
+    backend::transcribe::request_resume();
+    Ok(())
+}
+
+/// Stop an in-progress transcription run. Already-completed transcripts are
+/// kept; the file currently mid-flight is abandoned (its partial text is
+/// discarded and the slice stays untranscribed).
+#[tauri::command]
+async fn stop_transcription() -> Result<(), ApiError> {
+    backend::transcribe::request_stop();
+    Ok(())
 }
 
 #[tauri::command]
@@ -1935,6 +1975,9 @@ pub fn run() {
             transcribe_slices,
             estimate_transcription,
             get_transcription_progress,
+            pause_transcription,
+            resume_transcription,
+            stop_transcription,
             export_transcribed_text,
             export_audio,
             update_slice_name,

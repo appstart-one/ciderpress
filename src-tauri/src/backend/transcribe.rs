@@ -36,6 +36,58 @@ lazy_static::lazy_static! {
     static ref CURRENT_SLICE_START_TIME: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
 }
 
+// ---------------------------------------------------------------------------
+// Run control (pause / stop) — UI-progress-aware wrappers.
+//
+// The raw atomic flags live in `parakeet.rs` (so the self-contained
+// `parakeet_smoke` binary keeps compiling); these wrappers add the
+// TranscriptionProgress bookkeeping the UI reads.
+// ---------------------------------------------------------------------------
+
+/// Request a pause: work halts at the next control point (next file, next
+/// Parakeet chunk, next Whisper segment). Reflected immediately in the UI.
+pub fn request_pause() {
+    super::parakeet::request_pause();
+    let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
+    if let Some(ref mut p) = *progress {
+        p.is_paused = true;
+        p.current_step = "Paused".to_string();
+    }
+}
+
+/// Resume a paused run.
+pub fn request_resume() {
+    super::parakeet::request_resume();
+    let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
+    if let Some(ref mut p) = *progress {
+        p.is_paused = false;
+        p.current_step = "Transcribing audio...".to_string();
+    }
+}
+
+/// Request the run to stop at the next control point. Already-completed
+/// transcripts are kept; the in-flight file is abandoned.
+pub fn request_stop() {
+    super::parakeet::request_stop();
+    let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
+    if let Some(ref mut p) = *progress {
+        p.is_paused = false;
+        p.current_step = "Stopping…".to_string();
+    }
+}
+
+/// True if a stop has been requested for the current run.
+pub fn is_stop_requested() -> bool {
+    super::parakeet::is_stop_requested()
+}
+
+/// Block while paused (and not stopped). Returns immediately if not paused.
+/// Called at the between-files, between-chunk and between-segment control
+/// points. The "Paused" UI step is set by `request_pause`.
+pub fn wait_if_paused() {
+    super::parakeet::wait_while_paused();
+}
+
 /// Get the current transcription progress
 pub fn get_transcription_progress() -> Option<TranscriptionProgress> {
     let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap().clone();
@@ -75,6 +127,10 @@ pub fn init_transcription_progress(
     bytes_per_second_rate: f64,
     total_audio_seconds: f64,
 ) {
+    // A fresh run starts with control flags cleared (any prior pause/stop from
+    // a previous run must not leak into this one).
+    super::parakeet::reset_control_flags();
+
     let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
     *progress = Some(TranscriptionProgress {
         total_slices,
@@ -86,6 +142,7 @@ pub fn init_transcription_progress(
         estimated_total_seconds,
         elapsed_seconds: 0,
         is_active: true,
+        is_paused: false,
         current_slice_elapsed_seconds: 0,
         current_slice_estimated_seconds: 0,
         current_slice_file_size: 0,
@@ -481,6 +538,18 @@ impl<'a> TranscriptionEngine<'a> {
         rt.block_on(self.real_transcribe(&transcription_path))
     }
 
+    /// Run transcription for a single file.
+    ///
+    /// Stop/pause handling on the Whisper path: simple-whisper 0.1.8 runs the
+    /// whole file inside one `WhisperState::full()` C call on a *detached*
+    /// `spawn_blocking` task, emitting segments through a segment callback whose
+    /// `tx.send(...)` results are ignored (`let _ = ...`). Returning early here
+    /// drops the receiver stream, but that does NOT cancel the C decode — it
+    /// keeps running to completion, burning CPU for the remainder of that one
+    /// file. Nothing it produces is persisted (we return an error before any DB
+    /// write), which is the accepted behavior per the bead. Pause likewise
+    /// cannot suspend the in-flight `full()` call; both take effect at the next
+    /// segment boundary / file boundary.
     async fn real_transcribe(&self, audio_path: &str) -> Result<String> {
         tracing::info!("Starting transcription of {} with model {}", audio_path, self.config.model_name);
 
@@ -514,6 +583,14 @@ impl<'a> TranscriptionEngine<'a> {
         
         // Collect all transcription segments
         while let Some(event_result) = stream.next().await {
+            // Control point between segments. NOTE: dropping the stream here does
+            // NOT cancel the underlying whisper decode — see the module comment
+            // on `real_transcribe`'s stop handling. A stop simply abandons this
+            // file's output; a pause holds before consuming the next segment.
+            if is_stop_requested() {
+                return Err(anyhow::anyhow!("Transcription stopped by user"));
+            }
+            wait_if_paused();
             match event_result {
                 Ok(Event::Segment { transcription, percentage, .. }) => {
                     // `percentage` from simple-whisper is end_offset / audio_duration

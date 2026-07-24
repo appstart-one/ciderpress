@@ -44,7 +44,7 @@ import {
   Divider
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink, IconPlus, IconMusic, IconTypography, IconFilterOff, IconHourglass } from '@tabler/icons-react';
+import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPlayerPause, IconPlayerStop, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink, IconPlus, IconMusic, IconTypography, IconFilterOff, IconHourglass } from '@tabler/icons-react';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { QuillEditor } from '../components/QuillEditor';
 import { AudioPlayer } from '../components/AudioPlayer';
@@ -109,6 +109,7 @@ interface TranscriptionProgress {
   estimated_total_seconds: number;
   elapsed_seconds: number;
   is_active: boolean;
+  is_paused: boolean;
   // Per-slice progress tracking
   current_slice_elapsed_seconds: number;
   current_slice_estimated_seconds: number;
@@ -1990,6 +1991,47 @@ export default function Slices() {
                       />
                     </Stack>
                   )}
+
+                  {/* Run controls: Pause/Resume + Stop */}
+                  <Group justify="flex-end" gap="xs">
+                    {transcriptionProgress?.is_paused ? (
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="blue"
+                        leftSection={<IconPlayerPlay size={16} />}
+                        disabled={transcriptionProgress?.current_step === 'Stopping…'}
+                        onClick={() => { invoke('resume_transcription').catch((e) => console.error(e)); }}
+                      >
+                        Resume
+                      </Button>
+                    ) : (
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="blue"
+                        leftSection={<IconPlayerPause size={16} />}
+                        disabled={transcriptionProgress?.current_step === 'Stopping…'}
+                        onClick={() => { invoke('pause_transcription').catch((e) => console.error(e)); }}
+                      >
+                        Pause
+                      </Button>
+                    )}
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="red"
+                      leftSection={<IconPlayerStop size={16} />}
+                      disabled={transcriptionProgress?.current_step === 'Stopping…'}
+                      onClick={() => {
+                        if (window.confirm('Stop transcription? Completed files are kept; the current file will be discarded.')) {
+                          invoke('stop_transcription').catch((e) => console.error(e));
+                        }
+                      }}
+                    >
+                      Stop
+                    </Button>
+                  </Group>
                 </Stack>
               </DraggableCard>
             </Box>

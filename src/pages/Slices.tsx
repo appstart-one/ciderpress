@@ -42,7 +42,7 @@ import {
   Popover
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink, IconPlus, IconMusic, IconTypography } from '@tabler/icons-react';
+import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink, IconPlus, IconMusic, IconTypography, IconFilterOff } from '@tabler/icons-react';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { QuillEditor } from '../components/QuillEditor';
 import { AudioPlayer } from '../components/AudioPlayer';
@@ -1384,6 +1384,19 @@ export default function Slices() {
               label="Status"
               w={160}
             />
+            <Button
+              variant="subtle"
+              size="sm"
+              mt={24}
+              leftSection={<IconFilterOff size={16} />}
+              disabled={!searchTerm && statusFilter === 'all'}
+              onClick={() => {
+                setSearchTerm('');
+                setStatusFilter('all');
+              }}
+            >
+              Reset Filters
+            </Button>
             <Popover position="bottom-end" withArrow shadow="md">
               <Popover.Target>
                 <ActionIcon variant="light" size="lg" mt={24} title="Toggle Columns">

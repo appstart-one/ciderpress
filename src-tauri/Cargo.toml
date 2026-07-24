@@ -1,6 +1,7 @@
 [package]
 name = "ciderpress"
 version = "0.2.1"
+default-run = "ciderpress"
 description = "Voice Memo Liberator - CiderPress"
 authors = ["you"]
 license = ""

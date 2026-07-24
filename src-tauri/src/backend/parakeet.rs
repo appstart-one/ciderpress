@@ -235,7 +235,15 @@ fn extract_tar_bz2(archive: &Path, dest_dir: &Path) -> Result<()> {
 /// Transcribe a 16 kHz mono WAV file using a Parakeet model.
 ///
 /// Blocking/CPU-bound; call from a blocking context (e.g. `spawn_blocking`).
-pub fn transcribe(model_name: &str, wav_path: &str) -> Result<String> {
+///
+/// `on_progress`, if provided, is invoked with the exact fraction of the file
+/// decoded so far (0.0..=1.0): once with `0.0` before the first chunk, then
+/// with `range.end / samples.len()` after each chunk (reaching `1.0` at the end).
+pub fn transcribe(
+    model_name: &str,
+    wav_path: &str,
+    on_progress: Option<&(dyn Fn(f32) + Send + Sync)>,
+) -> Result<String> {
     use sherpa_onnx::{
         OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig, Wave,
     };
@@ -283,6 +291,13 @@ pub fn transcribe(model_name: &str, wav_path: &str) -> Result<String> {
     let sample_rate = wave.sample_rate();
     let samples = wave.samples();
     let chunks = chunk_boundaries(samples, sample_rate as u32);
+    let total_samples = samples.len().max(1) as f32;
+
+    // Emit an initial 0.0 so the UI resets to the start of this file.
+    if let Some(cb) = on_progress {
+        cb(0.0);
+    }
+
     let mut texts: Vec<String> = Vec::with_capacity(chunks.len());
     for (i, range) in chunks.iter().enumerate() {
         tracing::info!(
@@ -300,6 +315,10 @@ pub fn transcribe(model_name: &str, wav_path: &str) -> Result<String> {
             if !text.is_empty() {
                 texts.push(text);
             }
+        }
+        // Exact fraction of the file processed after this chunk.
+        if let Some(cb) = on_progress {
+            cb(range.end as f32 / total_samples);
         }
     }
 
@@ -408,7 +427,8 @@ mod tests {
         assert!(wav.exists(), "test wav not found at {:?}", wav);
 
         let start = std::time::Instant::now();
-        let text = transcribe(model_name, wav.to_str().unwrap())?;
+        let print_progress = |f: f32| println!("  progress: {:.3}", f);
+        let text = transcribe(model_name, wav.to_str().unwrap(), Some(&print_progress))?;
         let elapsed = start.elapsed();
 
         println!("=== Parakeet TDT v2 transcript ===");

@@ -64,7 +64,12 @@ fn main() -> anyhow::Result<()> {
     println!("\n  model ready in {:.1}s", dl_start.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
-    let text = parakeet::transcribe(&model_name, &wav_path)?;
+    // Print the exact per-chunk decode fraction so we can confirm it advances
+    // monotonically from ~0.0 to 1.0.
+    let on_progress = |fraction: f32| {
+        println!("  progress: {:.4}", fraction);
+    };
+    let text = parakeet::transcribe(&model_name, &wav_path, Some(&on_progress))?;
     let elapsed = t0.elapsed();
 
     println!("\n=== TRANSCRIPT ===");

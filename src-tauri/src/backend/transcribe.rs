@@ -56,8 +56,25 @@ pub fn get_transcription_progress() -> Option<TranscriptionProgress> {
     progress
 }
 
+/// Compute the audio duration (seconds) of a slice for progress weighting.
+///
+/// Prefers the real measured `audio_time_length_seconds` from the DB; falls
+/// back to a file-size heuristic (~1 MB per minute of audio) when it is
+/// missing or non-positive.
+pub fn slice_audio_seconds(audio_time_length_seconds: Option<f64>, file_size: i64) -> f64 {
+    match audio_time_length_seconds {
+        Some(d) if d > 0.0 => d,
+        _ => (file_size as f64 / 1_048_576.0) * 60.0,
+    }
+}
+
 /// Initialize transcription progress tracking
-pub fn init_transcription_progress(total_slices: u32, estimated_total_seconds: u32, bytes_per_second_rate: f64) {
+pub fn init_transcription_progress(
+    total_slices: u32,
+    estimated_total_seconds: u32,
+    bytes_per_second_rate: f64,
+    total_audio_seconds: f64,
+) {
     let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
     *progress = Some(TranscriptionProgress {
         total_slices,
@@ -73,6 +90,10 @@ pub fn init_transcription_progress(total_slices: u32, estimated_total_seconds: u
         current_slice_estimated_seconds: 0,
         current_slice_file_size: 0,
         bytes_per_second_rate,
+        current_slice_fraction: 0.0,
+        current_slice_audio_seconds: 0.0,
+        completed_audio_seconds: 0.0,
+        total_audio_seconds,
     });
 
     let mut start_time = TRANSCRIPTION_START_TIME.lock().unwrap();
@@ -89,9 +110,15 @@ pub fn init_transcription_progress_with_logging(
     total_slices: u32,
     estimated_total_seconds: u32,
     bytes_per_second_rate: f64,
+    total_audio_seconds: f64,
     model_name: &str,
 ) {
-    init_transcription_progress(total_slices, estimated_total_seconds, bytes_per_second_rate);
+    init_transcription_progress(
+        total_slices,
+        estimated_total_seconds,
+        bytes_per_second_rate,
+        total_audio_seconds,
+    );
 
     // Log transcription start to JSON log
     logging::log_transcription_start(slice_ids, model_name, estimated_total_seconds);
@@ -108,6 +135,8 @@ pub fn start_current_slice(slice_id: i64, slice_name: String, file_size: i64, au
         std::cmp::max(1, (audio_minutes / 10.0 * 35.0).ceil() as u32)
     };
 
+    let audio_seconds = slice_audio_seconds(audio_duration_seconds, file_size);
+
     let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
     if let Some(ref mut p) = *progress {
         p.current_slice_id = Some(slice_id);
@@ -116,6 +145,9 @@ pub fn start_current_slice(slice_id: i64, slice_name: String, file_size: i64, au
         p.current_slice_estimated_seconds = estimated_seconds;
         p.current_slice_elapsed_seconds = 0;
         p.current_step = "Transcribing audio...".to_string();
+        // Real decode-position tracking: reset fraction, record this slice's duration.
+        p.current_slice_fraction = 0.0;
+        p.current_slice_audio_seconds = audio_seconds;
     }
 
     // Start the current slice timer
@@ -142,11 +174,28 @@ fn update_transcription_progress(
     }
 }
 
+/// Update the real decode position within the current slice (0.0..=1.0).
+///
+/// Called from the whisper `Event::Segment` handler (with the crate's
+/// `percentage`, already a fraction of the whole file) and from the Parakeet
+/// per-chunk progress callback. Clamped defensively to 0.0..=1.0.
+pub fn update_current_slice_fraction(fraction: f32) {
+    let clamped = fraction.clamp(0.0, 1.0);
+    let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
+    if let Some(ref mut p) = *progress {
+        p.current_slice_fraction = clamped;
+    }
+}
+
 /// Mark a slice as completed
 pub fn mark_slice_completed() {
     let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap();
     if let Some(ref mut p) = *progress {
         p.completed_slices += 1;
+        // Accumulate this slice's audio duration toward the overall total and
+        // pin the current-slice fraction to fully done.
+        p.completed_audio_seconds += p.current_slice_audio_seconds;
+        p.current_slice_fraction = 1.0;
     }
 }
 
@@ -441,7 +490,9 @@ impl<'a> TranscriptionEngine<'a> {
             let model_name = self.config.model_name.clone();
             let path = audio_path.to_string();
             return tokio::task::spawn_blocking(move || {
-                super::parakeet::transcribe(&model_name, &path)
+                // Feed the exact per-chunk decode position into the shared progress state.
+                let on_progress = |fraction: f32| update_current_slice_fraction(fraction);
+                super::parakeet::transcribe(&model_name, &path, Some(&on_progress))
             })
             .await
             .context("Parakeet transcription task panicked")?;
@@ -464,7 +515,11 @@ impl<'a> TranscriptionEngine<'a> {
         // Collect all transcription segments
         while let Some(event_result) = stream.next().await {
             match event_result {
-                Ok(Event::Segment { transcription, .. }) => {
+                Ok(Event::Segment { transcription, percentage, .. }) => {
+                    // `percentage` from simple-whisper is end_offset / audio_duration
+                    // (a 0.0..=1.0 fraction of the whole file, clamped to 1.0), so it
+                    // is the true decode position within the current slice.
+                    update_current_slice_fraction(percentage);
                     transcription_segments.push(transcription);
                 }
                 Ok(Event::DownloadStarted { file }) => {

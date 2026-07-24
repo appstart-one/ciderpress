@@ -112,6 +112,11 @@ interface TranscriptionProgress {
   current_slice_estimated_seconds: number;
   current_slice_file_size: number;
   bytes_per_second_rate: number;
+  // Real decode-position progress (duration-weighted)
+  current_slice_fraction: number; // 0.0-1.0 true decode position within the current slice
+  current_slice_audio_seconds: number; // audio duration of the current slice
+  completed_audio_seconds: number; // total audio duration of fully-transcribed slices
+  total_audio_seconds: number; // total audio duration across all selected slices
 }
 
 type SortField = keyof Slice;
@@ -1124,23 +1129,42 @@ export default function Slices() {
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Calculate progress percentage including partial progress on current slice
-  const getProgressPercentage = (): number => {
+  // Overall progress fraction (0..1) weighted by real audio duration, using
+  // the actual decode position of the current file rather than a time guess.
+  const getOverallFraction = (): number => {
     if (!transcriptionProgress || transcriptionProgress.total_slices === 0) return 0;
 
-    // Calculate progress within current slice (0 to 1)
-    let currentSliceProgress = 0;
-    if (transcriptionProgress.current_slice_estimated_seconds > 0) {
-      currentSliceProgress = Math.min(
-        1,
-        transcriptionProgress.current_slice_elapsed_seconds / transcriptionProgress.current_slice_estimated_seconds
-      );
+    const { total_audio_seconds, completed_audio_seconds, current_slice_fraction, current_slice_audio_seconds } =
+      transcriptionProgress;
+
+    if (total_audio_seconds > 0) {
+      const done = completed_audio_seconds + current_slice_fraction * current_slice_audio_seconds;
+      return Math.min(1, Math.max(0, done / total_audio_seconds));
     }
 
-    // Total progress = completed slices + partial current slice progress
-    const totalProgress = (transcriptionProgress.completed_slices + currentSliceProgress) / transcriptionProgress.total_slices;
+    // Fallback when no durations are available: slice count.
+    return Math.min(1, transcriptionProgress.completed_slices / transcriptionProgress.total_slices);
+  };
 
-    return Math.min(100, Math.round(totalProgress * 100));
+  // Overall progress as an integer percentage for display.
+  const getProgressPercentage = (): number => Math.min(100, Math.round(getOverallFraction() * 100));
+
+  // Real decode position within the current file (0..100), for the per-file bar.
+  const getCurrentFilePercentage = (): number => {
+    if (!transcriptionProgress) return 0;
+    return Math.min(100, Math.round(transcriptionProgress.current_slice_fraction * 100));
+  };
+
+  // Extrapolated remaining time from elapsed / overall-fraction. Only meaningful
+  // once we're a little way in, so callers gate on fraction > 0.03.
+  const getEtaSeconds = (): number | null => {
+    if (!transcriptionProgress) return null;
+    const fraction = getOverallFraction();
+    if (fraction <= 0.03) return null;
+    const elapsed = transcriptionProgress.elapsed_seconds;
+    if (elapsed <= 0) return null;
+    const total = elapsed / fraction;
+    return Math.max(0, Math.round(total - elapsed));
   };
 
   const getStatusColor = (slice: Slice) => {
@@ -1880,18 +1904,32 @@ export default function Slices() {
                       <IconClock size={16} style={{ color: 'var(--mantine-color-dimmed)' }} />
                       <Text size="sm" c="dimmed">
                         {formatElapsedTime(transcriptionProgress?.elapsed_seconds || 0)}
-                        {transcriptionProgress && transcriptionProgress.estimated_total_seconds > 0 && (
-                          <Text span c="dimmed"> / {formatElapsedTime(transcriptionProgress.estimated_total_seconds)}</Text>
+                        {getEtaSeconds() !== null && (
+                          <Text span c="dimmed"> · {formatElapsedTime(getEtaSeconds() as number)} left</Text>
                         )}
                       </Text>
                     </Group>
                   </Group>
 
-                  {/* Current File */}
+                  {/* Current File — real decode position within this file */}
                   {transcriptionProgress?.current_slice_name && (
-                    <Text size="xs" c="dimmed" ta="center" truncate="end" style={{ maxWidth: '100%' }}>
-                      {transcriptionProgress.current_slice_name}
-                    </Text>
+                    <Stack gap={4}>
+                      <Group justify="space-between" gap="xs" wrap="nowrap">
+                        <Text size="xs" c="dimmed" truncate="end" style={{ minWidth: 0 }}>
+                          {transcriptionProgress.current_slice_name}
+                        </Text>
+                        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                          {getCurrentFilePercentage()}%
+                        </Text>
+                      </Group>
+                      <Progress
+                        size="sm"
+                        radius="md"
+                        color="teal"
+                        value={getCurrentFilePercentage()}
+                        transitionDuration={300}
+                      />
+                    </Stack>
                   )}
                 </Stack>
               </DraggableCard>

@@ -437,6 +437,14 @@ async fn transcribe_slices(
         .map(|s| s.estimated_time_to_transcribe as u32)
         .sum();
 
+    // Total audio duration across all selected slices, for duration-weighted
+    // overall progress. Prefers each slice's real measured duration; falls back
+    // to a file-size heuristic when it is missing.
+    let total_audio_seconds: f64 = filtered_slice_ids.iter()
+        .filter_map(|id| slices.iter().find(|s| s.id == Some(*id)))
+        .map(|s| backend::transcribe::slice_audio_seconds(s.audio_time_length_seconds, s.audio_file_size))
+        .sum();
+
     // Clone the database connection for the background task
     let db_path = config.ciderpress_home_path().join("CiderPress-db.sqlite");
     let total_slices = filtered_slice_ids.len() as u32;
@@ -459,6 +467,7 @@ async fn transcribe_slices(
                     total_slices,
                     estimated_total_seconds,
                     bytes_per_second_rate,
+                    total_audio_seconds,
                     &model_name,
                 );
 

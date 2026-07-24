@@ -128,6 +128,11 @@ pub struct TranscriptionProgress {
     pub current_slice_estimated_seconds: u32,
     pub current_slice_file_size: i64,
     pub bytes_per_second_rate: f64, // Historical transcription speed (bytes transcribed per second of processing time)
+    // Real decode-position progress (duration-weighted)
+    pub current_slice_fraction: f32, // 0.0-1.0 true decode position within the current slice
+    pub current_slice_audio_seconds: f64, // audio duration of the current slice
+    pub completed_audio_seconds: f64, // total audio duration of fully-transcribed slices
+    pub total_audio_seconds: f64, // total audio duration across all selected slices
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

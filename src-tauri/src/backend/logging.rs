@@ -370,6 +370,7 @@ mod tests {
             model_name: "base.en".to_string(),
             first_run_complete: false,
             skip_already_transcribed: true,
+            ..Config::default()
         };
 
         init_logging(&config)?;

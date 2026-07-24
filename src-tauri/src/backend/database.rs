@@ -1185,6 +1185,8 @@ mod tests {
             transcription: None,
             transcription_time_taken: None,
             transcription_word_count: None,
+            transcription_model: None,
+            recording_date: None,
         }
     }
 

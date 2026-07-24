@@ -838,6 +838,7 @@ mod tests {
             ciderpress_home: "/tmp".to_string(),
             model_name: "base.en".to_string(),
             first_run_complete: false,
+            ..Config::default()
         };
         
         let temp_dir = TempDir::new().unwrap();
@@ -866,6 +867,7 @@ mod tests {
             ciderpress_home: temp_dir.path().to_string_lossy().to_string(),
             model_name: "base.en".to_string(),
             first_run_complete: false,
+            ..Config::default()
         };
         
         let db_path = temp_dir.path().join("test.db");
@@ -889,6 +891,8 @@ mod tests {
             transcription: None,
             transcription_time_taken: None,
             transcription_word_count: None,
+            transcription_model: None,
+            recording_date: None,
         };
 
         let slice_id = db.insert_slice(&slice).unwrap();
@@ -946,6 +950,7 @@ mod tests {
             ciderpress_home: temp_dir.path().to_string_lossy().to_string(),
             model_name: "tiny".to_string(),  // Use tiny model for faster testing
             first_run_complete: false,
+            ..Config::default()
         };
         
         // Create test database
@@ -1021,6 +1026,7 @@ mod tests {
             ciderpress_home: temp_dir.path().to_string_lossy().to_string(),
             model_name: "base.en".to_string(),
             first_run_complete: false,
+            ..Config::default()
         };
         
         let db_path = temp_dir.path().join("test.db");
@@ -1044,6 +1050,8 @@ mod tests {
             transcription: None,
             transcription_time_taken: None,
             transcription_word_count: None,
+            transcription_model: None,
+            recording_date: None,
         };
 
         let slice_id = db.insert_slice(&slice).unwrap();

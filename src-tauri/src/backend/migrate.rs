@@ -567,6 +567,7 @@ enum ProcessResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::{params, Connection};
     use tempfile::TempDir;
 
     #[test]
@@ -603,6 +604,7 @@ mod tests {
             ciderpress_home: temp_path.join("ciderpress").to_string_lossy().to_string(),
             model_name: "base.en".to_string(),
             first_run_complete: false,
+            ..Config::default()
         };
 
         let migration_engine = MigrationEngine::new(&config);
@@ -644,6 +646,7 @@ mod tests {
             ciderpress_home: dest_dir.to_string_lossy().to_string(),
             model_name: "base.en".to_string(),
             first_run_complete: false,
+            ..Config::default()
         };
         config.ensure_ciderpress_home()?;
 
@@ -708,6 +711,7 @@ mod tests {
             ciderpress_home: dest_dir.to_string_lossy().to_string(),
             model_name: "base.en".to_string(),
             first_run_complete: false,
+            ..Config::default()
         };
         config.ensure_ciderpress_home()?;
 
@@ -1064,6 +1068,7 @@ mod tests {
             ciderpress_home: dest_dir.to_string_lossy().to_string(),
             model_name: "base.en".to_string(),
             first_run_complete: false,
+            ..Config::default()
         };
         
         println!("Test config created:");

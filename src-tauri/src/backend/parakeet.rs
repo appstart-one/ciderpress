@@ -276,15 +276,85 @@ pub fn transcribe(model_name: &str, wav_path: &str) -> Result<String> {
 
     let recognizer = OfflineRecognizer::create(&config)
         .context("Failed to create sherpa-onnx offline recognizer for Parakeet")?;
-    let stream = recognizer.create_stream();
-    stream.accept_waveform(wave.sample_rate(), wave.samples());
-    recognizer.decode(&stream);
-    let result = stream
-        .get_result()
-        .context("Parakeet recognizer returned no result")?;
 
-    tracing::info!("Parakeet transcription complete ({} chars)", result.text.len());
-    Ok(result.text)
+    // Feeding an entire long recording in one shot makes ONNX Runtime fail on
+    // oversized encoder inputs, and its C++ exception aborts the process when
+    // it crosses the FFI boundary — so long audio must be chunked.
+    let sample_rate = wave.sample_rate();
+    let samples = wave.samples();
+    let chunks = chunk_boundaries(samples, sample_rate as u32);
+    let mut texts: Vec<String> = Vec::with_capacity(chunks.len());
+    for (i, range) in chunks.iter().enumerate() {
+        tracing::info!(
+            "Parakeet chunk {}/{}: {:.1}s–{:.1}s",
+            i + 1,
+            chunks.len(),
+            range.start as f32 / sample_rate as f32,
+            range.end as f32 / sample_rate as f32,
+        );
+        let stream = recognizer.create_stream();
+        stream.accept_waveform(sample_rate, &samples[range.clone()]);
+        recognizer.decode(&stream);
+        if let Some(result) = stream.get_result() {
+            let text = result.text.trim().to_string();
+            if !text.is_empty() {
+                texts.push(text);
+            }
+        }
+    }
+
+    let full_text = texts.join(" ");
+    tracing::info!("Parakeet transcription complete ({} chars)", full_text.len());
+    Ok(full_text)
+}
+
+/// Max samples fed to the recognizer in one shot (60 s at 16 kHz).
+const CHUNK_TARGET_SECS: usize = 60;
+/// Earliest point a chunk is allowed to end, so the quiet-point search has a
+/// window (CHUNK_MIN_SECS..CHUNK_TARGET_SECS) to cut in.
+const CHUNK_MIN_SECS: usize = 45;
+/// Energy-window size used when searching for the quietest cut point.
+const ENERGY_WIN_MS: usize = 100;
+
+/// Split audio into chunk ranges of at most CHUNK_TARGET_SECS, cutting each
+/// chunk at the quietest 100 ms window in the last part of its span so cuts
+/// land in pauses rather than mid-word. Audio at or under the target length
+/// is returned as a single chunk.
+fn chunk_boundaries(samples: &[f32], sample_rate: u32) -> Vec<std::ops::Range<usize>> {
+    let target = CHUNK_TARGET_SECS * sample_rate as usize;
+    let min = CHUNK_MIN_SECS * sample_rate as usize;
+    let energy_win = (ENERGY_WIN_MS * sample_rate as usize) / 1000;
+
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    while samples.len() - start > target {
+        let cut = quietest_point(&samples[start + min..start + target], energy_win) + start + min;
+        ranges.push(start..cut);
+        start = cut;
+    }
+    if start < samples.len() {
+        ranges.push(start..samples.len());
+    }
+    ranges
+}
+
+/// Index (relative to `region`) of the center of the lowest-energy window.
+fn quietest_point(region: &[f32], win: usize) -> usize {
+    if region.len() <= win || win == 0 {
+        return region.len() / 2;
+    }
+    let mut best_start = 0usize;
+    let mut best_energy = f32::MAX;
+    let mut idx = 0usize;
+    while idx + win <= region.len() {
+        let energy: f32 = region[idx..idx + win].iter().map(|s| s * s).sum();
+        if energy < best_energy {
+            best_energy = energy;
+            best_start = idx;
+        }
+        idx += win / 2;
+    }
+    best_start + win / 2
 }
 
 #[cfg(test)]
@@ -347,5 +417,40 @@ mod tests {
 
         assert!(!text.trim().is_empty(), "transcript should not be empty");
         Ok(())
+    }
+
+    #[test]
+    fn test_chunk_boundaries_short_audio_single_chunk() {
+        let sr = 16_000u32;
+        let samples = vec![0.1f32; 30 * sr as usize];
+        let ranges = chunk_boundaries(&samples, sr);
+        assert_eq!(ranges, vec![0..samples.len()]);
+    }
+
+    #[test]
+    fn test_chunk_boundaries_long_audio_contiguous_and_bounded() {
+        let sr = 16_000u32;
+        // ~7 minutes of "speech" with a silent gap every 55s for cuts to find.
+        let total = 7 * 60 * sr as usize;
+        let mut samples = vec![0.5f32; total];
+        for gap_start in (55 * sr as usize..total).step_by(55 * sr as usize) {
+            let gap_end = (gap_start + sr as usize / 2).min(total);
+            samples[gap_start..gap_end].fill(0.0);
+        }
+
+        let ranges = chunk_boundaries(&samples, sr);
+        assert!(ranges.len() > 1, "long audio must be split");
+        assert_eq!(ranges.first().unwrap().start, 0);
+        assert_eq!(ranges.last().unwrap().end, total);
+        for pair in ranges.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start, "chunks must be contiguous");
+        }
+        for r in &ranges {
+            assert!(
+                r.end - r.start <= CHUNK_TARGET_SECS * sr as usize,
+                "chunk exceeds target length"
+            );
+            assert!(!r.is_empty());
+        }
     }
 }

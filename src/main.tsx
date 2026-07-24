@@ -16,22 +16,23 @@
 
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { MantineProvider, createTheme } from "@mantine/core";
+import { MantineProvider } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
+import { resolveTheme } from "./themes";
 import App from "./App.tsx";
 import "./index.css";
 
-const theme = createTheme({
-  primaryColor: 'blue',
-  fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif',
-});
-
 function AppWithTheme() {
-  const { colorScheme } = useTheme();
-  
+  const { themeId } = useTheme();
+  const active = resolveTheme(themeId);
+
   return (
-    <MantineProvider theme={theme} forceColorScheme={colorScheme}>
+    <MantineProvider
+      theme={active.mantine}
+      forceColorScheme={active.base}
+      cssVariablesResolver={active.cssVariables}
+    >
       <Notifications />
       <App />
     </MantineProvider>

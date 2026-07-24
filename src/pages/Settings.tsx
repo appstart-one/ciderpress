@@ -35,10 +35,14 @@ import {
   Switch,
   Box,
   Transition,
-  ThemeIcon
+  ThemeIcon,
+  SimpleGrid,
+  UnstyledButton
 } from '@mantine/core';
 import { IconCheck, IconX, IconInfoCircle, IconDownload, IconShieldLock, IconLock, IconFolderOpen } from '@tabler/icons-react';
 import { DraggableCard } from '../components/DraggableCard';
+import { useTheme } from '../contexts/ThemeContext';
+import { themeList } from '../themes';
 
 interface ModelDownloadProgress {
   model_name: string;
@@ -79,6 +83,7 @@ const WHISPER_MODEL_INFO: Record<string, { label: string; size: string }> = {
 };
 
 export default function Settings() {
+  const { themeId, setThemeId } = useTheme();
   const [config, setConfig] = useState<Config>({
     voice_memo_root: '',
     ciderpress_home: '',
@@ -362,6 +367,60 @@ export default function Settings() {
 
         <Paper p="lg" withBorder>
           <Stack gap="md">
+            <Title order={3}>Appearance</Title>
+            <Text size="sm" c="dimmed">
+              Choose a theme. Changes apply instantly across the whole app and are remembered next time you open CiderPress.
+            </Text>
+
+            <SimpleGrid cols={{ base: 1, xs: 2, sm: 3 }} spacing="sm">
+              {themeList.map((t) => {
+                const isActive = t.id === themeId;
+                return (
+                  <UnstyledButton
+                    key={t.id}
+                    onClick={() => setThemeId(t.id)}
+                    aria-label={`Use ${t.label} theme`}
+                    style={{
+                      borderRadius: 'var(--mantine-radius-md)',
+                      border: isActive
+                        ? '2px solid var(--mantine-primary-color-filled)'
+                        : '1px solid var(--mantine-color-default-border)',
+                      padding: 'var(--mantine-spacing-sm)',
+                      backgroundColor: isActive
+                        ? 'var(--mantine-primary-color-light)'
+                        : 'var(--mantine-color-default)',
+                    }}
+                  >
+                    <Group gap="sm" wrap="nowrap">
+                      <Box
+                        style={{
+                          display: 'flex',
+                          borderRadius: 6,
+                          overflow: 'hidden',
+                          border: '1px solid var(--mantine-color-default-border)',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Box style={{ width: 20, height: 32, backgroundColor: t.swatch.surface }} />
+                        <Box style={{ width: 20, height: 32, backgroundColor: t.swatch.accent }} />
+                      </Box>
+                      <div style={{ minWidth: 0 }}>
+                        <Group gap={6} wrap="nowrap">
+                          <Text size="sm" fw={600} truncate>{t.label}</Text>
+                          {isActive && <IconCheck size={14} />}
+                        </Group>
+                        <Text size="xs" c="dimmed" tt="capitalize">{t.base}</Text>
+                      </div>
+                    </Group>
+                  </UnstyledButton>
+                );
+              })}
+            </SimpleGrid>
+          </Stack>
+        </Paper>
+
+        <Paper p="lg" withBorder>
+          <Stack gap="md">
             <Title order={3}>Paths</Title>
             
             <Group align="flex-end" gap="sm" wrap="nowrap">
@@ -527,7 +586,9 @@ export default function Settings() {
                 width: 12,
                 height: 12,
                 borderRadius: '50%',
-                backgroundColor: validationStatus === 'Valid' ? '#10b981' : '#ef4444'
+                backgroundColor: validationStatus === 'Valid'
+                  ? 'var(--mantine-color-green-6)'
+                  : 'var(--mantine-color-red-6)'
               }} />
               <Text size="sm" c={validationStatus === 'Valid' ? 'green' : 'red'}>
                 {validationStatus === 'Valid'

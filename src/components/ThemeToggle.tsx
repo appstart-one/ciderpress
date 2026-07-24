@@ -14,23 +14,62 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { ActionIcon, Tooltip } from '@mantine/core';
-import { IconSun, IconMoon } from '@tabler/icons-react';
+import { ActionIcon, Tooltip, Menu, Group, Box, Text } from '@mantine/core';
+import { IconSun, IconMoon, IconCheck } from '@tabler/icons-react';
 import { useTheme } from '../contexts/ThemeContext';
+import { themeList } from '../themes';
 
 export const ThemeToggle = () => {
-  const { colorScheme, toggleColorScheme } = useTheme();
+  const { colorScheme, themeId, setThemeId } = useTheme();
 
   return (
-    <Tooltip label={`Switch to ${colorScheme === 'dark' ? 'light' : 'dark'} mode`}>
-      <ActionIcon
-        onClick={toggleColorScheme}
-        variant="outline"
-        size="lg"
-        aria-label="Toggle color scheme"
-      >
-        {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
-      </ActionIcon>
-    </Tooltip>
+    <Menu shadow="md" width={220} position="bottom-end" withinPortal>
+      <Menu.Target>
+        <Tooltip label="Change theme">
+          <ActionIcon variant="outline" size="lg" aria-label="Change theme">
+            {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
+          </ActionIcon>
+        </Tooltip>
+      </Menu.Target>
+
+      <Menu.Dropdown>
+        <Menu.Label>Theme</Menu.Label>
+        {themeList.map((t) => (
+          <Menu.Item
+            key={t.id}
+            onClick={() => setThemeId(t.id)}
+            leftSection={
+              <Group gap={4} wrap="nowrap">
+                <Box
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: 3,
+                    backgroundColor: t.swatch.surface,
+                    border: '1px solid var(--mantine-color-default-border)',
+                  }}
+                />
+                <Box
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: 3,
+                    backgroundColor: t.swatch.accent,
+                  }}
+                />
+              </Group>
+            }
+            rightSection={
+              t.id === themeId ? <IconCheck size={16} /> : undefined
+            }
+          >
+            <Group justify="space-between" gap="xs" wrap="nowrap">
+              <Text size="sm">{t.label}</Text>
+              <Text size="xs" c="dimmed" tt="capitalize">{t.base}</Text>
+            </Group>
+          </Menu.Item>
+        ))}
+      </Menu.Dropdown>
+    </Menu>
   );
 }; 

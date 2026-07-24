@@ -705,7 +705,8 @@ async fn update_transcription_model(
     // Validate model name
     let valid_models = [
         "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-        "medium", "medium.en", "large", "large-v1", "large-v2", "large-v3"
+        "medium", "medium.en", "large", "large-v1", "large-v2", "large-v3",
+        "large-v3-turbo", "parakeet-tdt-0.6b-v2", "parakeet-tdt-0.6b-v3"
     ];
     
     if !valid_models.contains(&modelName.as_str()) {
@@ -737,6 +738,9 @@ async fn get_available_models() -> Result<Vec<String>, ApiError> {
         "large-v2".to_string(),
         "large-v3".to_string(),
         "large-v3-turbo".to_string(),
+        // NVIDIA Parakeet TDT (NeMo transducer) models via sherpa-onnx.
+        "parakeet-tdt-0.6b-v2".to_string(),
+        "parakeet-tdt-0.6b-v3".to_string(),
     ];
     Ok(models)
 }
@@ -786,6 +790,13 @@ async fn get_downloaded_models() -> Result<Vec<String>, ApiError> {
         }
     }
 
+    // Detect downloaded Parakeet (sherpa-onnx) models under ~/.ciderpress/models
+    for model_name in backend::parakeet::downloaded_models() {
+        if !downloaded.contains(&model_name) {
+            downloaded.push(model_name);
+        }
+    }
+
     Ok(downloaded)
 }
 
@@ -793,6 +804,12 @@ async fn get_downloaded_models() -> Result<Vec<String>, ApiError> {
 async fn download_whisper_model(model_name: String) -> Result<(), ApiError> {
     use simple_whisper::Model;
     use tokio::sync::mpsc::unbounded_channel;
+
+    // Parakeet (sherpa-onnx) models use a separate download/extract path but
+    // emit the same `model-download-progress` events the Settings UI listens to.
+    if backend::parakeet::is_parakeet(&model_name) {
+        return download_parakeet_model(model_name).await;
+    }
 
     // Parse model name to simple_whisper::Model enum
     let model = match model_name.as_str() {
@@ -903,6 +920,58 @@ async fn download_whisper_model(model_name: String) -> Result<(), ApiError> {
                 };
                 let _ = handle.emit("model-download-progress", progress);
             }
+            Err(ApiError {
+                message: format!("Failed to download model: {}", e),
+                kind: "DownloadError".to_string(),
+            })
+        }
+    }
+}
+
+/// Download + extract a Parakeet (sherpa-onnx) model, emitting the shared
+/// `model-download-progress` events so the existing Settings UI popup works.
+async fn download_parakeet_model(model_name: String) -> Result<(), ApiError> {
+    let emit = |percentage: f32, status: &str, error_message: Option<String>| {
+        if let Some(handle) = APP_HANDLE.get() {
+            let progress = ModelDownloadProgress {
+                model_name: model_name.clone(),
+                percentage,
+                status: status.to_string(),
+                error_message,
+            };
+            let _ = handle.emit("model-download-progress", progress);
+        }
+    };
+
+    // Already present — report completed immediately.
+    if backend::parakeet::is_downloaded(&model_name) {
+        emit(100.0, "completed", None);
+        return Ok(());
+    }
+
+    emit(0.0, "started", None);
+
+    let progress_name = model_name.clone();
+    let result = backend::parakeet::download_model(&model_name, move |pct| {
+        if let Some(handle) = APP_HANDLE.get() {
+            let progress = ModelDownloadProgress {
+                model_name: progress_name.clone(),
+                percentage: pct,
+                status: "progress".to_string(),
+                error_message: None,
+            };
+            let _ = handle.emit("model-download-progress", progress);
+        }
+    })
+    .await;
+
+    match result {
+        Ok(_) => {
+            emit(100.0, "completed", None);
+            Ok(())
+        }
+        Err(e) => {
+            emit(0.0, "error", Some(e.to_string()));
             Err(ApiError {
                 message: format!("Failed to download model: {}", e),
                 kind: "DownloadError".to_string(),

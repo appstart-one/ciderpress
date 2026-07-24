@@ -44,6 +44,15 @@ tokio-stream = "0.1.17"
 ffmpeg-next = { version = "7.1.0", features = ["build"] }
 regex = "1.10"
 tauri-plugin-shell = "2"
+# NVIDIA Parakeet TDT (NeMo transducer) transcription via k2-fsa sherpa-onnx.
+# Default feature `static` downloads a prebuilt sherpa-onnx native lib archive
+# (incl. onnxruntime) from GitHub releases at build time; macOS arm64 supported.
+sherpa-onnx = "1.13"
+# Streaming model-archive download with progress + .tar.bz2 extraction.
+reqwest = { version = "0.13", features = ["stream"] }
+futures-util = "0.3"
+tar = "0.4"
+bzip2 = "0.4"
 
 [dev-dependencies]
 tempfile = "3.20.0"

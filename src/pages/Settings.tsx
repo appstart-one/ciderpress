@@ -73,6 +73,9 @@ const WHISPER_MODEL_INFO: Record<string, { label: string; size: string }> = {
   'large-v2': { label: 'Large v2', size: '~1550 MB' },
   'large-v3': { label: 'Large v3', size: '~1550 MB' },
   'large-v3-turbo': { label: 'Large v3 Turbo', size: '~809 MB' },
+  // NVIDIA Parakeet TDT (NeMo transducer) models via sherpa-onnx.
+  'parakeet-tdt-0.6b-v2': { label: 'Parakeet TDT v2 (Recommended — best & fastest)', size: '~460 MB' },
+  'parakeet-tdt-0.6b-v3': { label: 'Parakeet TDT v3 (multilingual)', size: '~465 MB' },
 };
 
 export default function Settings() {
@@ -411,7 +414,7 @@ export default function Settings() {
               disabled={isDownloading}
             />
             <Text size="xs" c="dimmed">
-              Recommended: Large v3 Turbo offers the best balance of speed, accuracy, and size. On an M2 Mac, expect roughly 30 seconds to transcribe 10 minutes of audio.
+              Recommended: Parakeet TDT v2 is the best and fastest model for transcription (English only). Parakeet TDT v3 adds 25 European languages. Whisper Large v3 Turbo remains a strong multilingual alternative. On Apple Silicon, Parakeet transcribes far faster than real time.
             </Text>
 
             {!isCurrentModelDownloaded && !isDownloading && (

@@ -20,5 +20,6 @@ pub mod logging;
 pub mod migrate;
 pub mod models;
 pub mod nlm;
+pub mod parakeet;
 pub mod stats;
 pub mod transcribe;

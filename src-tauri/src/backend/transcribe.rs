@@ -434,7 +434,19 @@ impl<'a> TranscriptionEngine<'a> {
 
     async fn real_transcribe(&self, audio_path: &str) -> Result<String> {
         tracing::info!("Starting transcription of {} with model {}", audio_path, self.config.model_name);
-        
+
+        // Parakeet (NeMo transducer) models use the sherpa-onnx path instead of
+        // simple-whisper. The whisper flow below is left untouched.
+        if super::parakeet::is_parakeet(&self.config.model_name) {
+            let model_name = self.config.model_name.clone();
+            let path = audio_path.to_string();
+            return tokio::task::spawn_blocking(move || {
+                super::parakeet::transcribe(&model_name, &path)
+            })
+            .await
+            .context("Parakeet transcription task panicked")?;
+        }
+
         // Parse the model name to get the appropriate Model enum
         let model = self.parse_model_name(&self.config.model_name)?;
         

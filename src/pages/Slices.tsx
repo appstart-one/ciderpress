@@ -355,6 +355,9 @@ export default function Slices() {
       'large-v1': 'Large v1 (~10GB, best quality)',
       'large-v2': 'Large v2 (~10GB, best quality)',
       'large-v3': 'Large v3 (~10GB, best quality)',
+      'large-v3-turbo': 'Large v3 Turbo (~809MB, balanced)',
+      'parakeet-tdt-0.6b-v2': 'Parakeet TDT v2 (~460MB, best & fastest)',
+      'parakeet-tdt-0.6b-v3': 'Parakeet TDT v3 (~465MB, multilingual)',
     };
     return modelDescriptions[modelName] || modelName;
   };

@@ -405,6 +405,54 @@ impl Database {
         Ok(result.unwrap_or(34000.0))
     }
 
+    /// Compute this machine's *measured* realtime factor for a specific model:
+    /// how many seconds of audio it transcribes per second of processing time,
+    /// derived from past successful transcriptions with that exact model.
+    ///
+    /// `factor = SUM(audio_time_length_seconds) / SUM(transcription_time_taken)`.
+    ///
+    /// Returns `None` when there is too little signal to trust (fewer than 3
+    /// samples or under 60s of total audio), so callers can fall back to a
+    /// static per-family default.
+    pub fn measured_realtime_factor(&self, model: &str) -> Option<f64> {
+        let (total_audio, total_time, count): (f64, f64, i64) = self.conn.query_row(
+            r#"
+            SELECT
+                CAST(COALESCE(SUM(audio_time_length_seconds), 0) AS REAL),
+                CAST(COALESCE(SUM(transcription_time_taken), 0) AS REAL),
+                COUNT(*)
+            FROM slices
+            WHERE transcribed = 1
+              AND transcription_model = ?1
+              AND transcription_time_taken > 0
+              AND audio_time_length_seconds > 0
+            "#,
+            params![model],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).ok()?;
+
+        if count < 3 || total_audio < 60.0 || total_time <= 0.0 {
+            return None;
+        }
+
+        Some(total_audio / total_time)
+    }
+
+    /// Cheaply refresh the cached `estimated_time_to_transcribe` (seconds) for a
+    /// slice, e.g. after computing a model-aware estimate.
+    pub fn update_slice_estimated_time(&self, slice_id: i64, seconds: i32) -> Result<()> {
+        let rows_affected = self.conn.execute(
+            "UPDATE slices SET estimated_time_to_transcribe = ?1 WHERE id = ?2",
+            params![seconds, slice_id],
+        )?;
+
+        if rows_affected == 0 {
+            return Err(anyhow::anyhow!("Slice with ID {} not found", slice_id));
+        }
+
+        Ok(())
+    }
+
     pub fn search_recordings(&self, query: &str, limit: Option<u32>, offset: Option<u32>) -> Result<Vec<RecordingWithTranscript>> {
         let limit_clause = limit.map(|l| format!("LIMIT {}", l)).unwrap_or_default();
         let offset_clause = offset.map(|o| format!("OFFSET {}", o)).unwrap_or_default();
@@ -1188,6 +1236,45 @@ mod tests {
             transcription_model: None,
             recording_date: None,
         }
+    }
+
+    #[test]
+    fn test_measured_realtime_factor() {
+        let (db, _temp_dir) = create_test_database();
+
+        // No history at all -> None (can't measure).
+        assert!(db.measured_realtime_factor("large-v3-turbo").is_none());
+
+        // Seed 3 transcribed slices for the same model: 600s audio total over
+        // 60s of processing => factor 10.0.
+        for i in 0..3 {
+            let mut slice = create_test_slice(&format!("measured_{}.m4a", i));
+            slice.transcribed = true;
+            slice.transcription_model = Some("large-v3-turbo".to_string());
+            slice.audio_time_length_seconds = Some(200.0);
+            slice.transcription_time_taken = Some(20);
+            db.insert_slice(&slice).unwrap();
+        }
+
+        let factor = db
+            .measured_realtime_factor("large-v3-turbo")
+            .expect("3 samples / 600s audio should yield a measured factor");
+        assert!((factor - 10.0).abs() < 1e-6, "expected ~10x, got {}", factor);
+
+        // A different model with no history -> None.
+        assert!(db.measured_realtime_factor("tiny.en").is_none());
+
+        // Too little signal: a single sample is below the 3-row threshold.
+        let mut solo = create_test_slice("solo.m4a");
+        solo.transcribed = true;
+        solo.transcription_model = Some("base.en".to_string());
+        solo.audio_time_length_seconds = Some(120.0);
+        solo.transcription_time_taken = Some(10);
+        db.insert_slice(&solo).unwrap();
+        assert!(
+            db.measured_realtime_factor("base.en").is_none(),
+            "1 sample is too little signal to measure"
+        );
     }
 
     #[test]

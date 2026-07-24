@@ -29,7 +29,7 @@ use backend::{
     migrate::{MigrationEngine, get_audio_duration},
     transcribe::{TranscriptionEngine, get_transcription_progress as get_transcription_progress_fn},
     stats,
-    models::{ApiError, MigrationProgress, TranscriptionProgress, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
+    models::{ApiError, MigrationProgress, TranscriptionProgress, TranscriptionEstimate, SliceEstimate, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
 };
 use walkdir::WalkDir;
 
@@ -493,6 +493,116 @@ async fn transcribe_slices(
 
     // Return immediately so the UI can update
     Ok(())
+}
+
+/// Static per-family realtime factor (audio seconds transcribed per second of
+/// processing) used only for the cold-start case, before this machine has
+/// enough measured history for the active model. Larger = faster.
+fn default_realtime_factor(model: &str) -> f64 {
+    let m = model.to_lowercase();
+    if m.starts_with("parakeet") {
+        25.0
+    } else if m.starts_with("large-v3-turbo") {
+        20.0
+    } else if m.starts_with("large") {
+        5.0
+    } else if m.starts_with("medium") {
+        8.0
+    } else if m.starts_with("small") {
+        15.0
+    } else if m.starts_with("base") {
+        22.0
+    } else if m.starts_with("tiny") {
+        30.0
+    } else {
+        10.0
+    }
+}
+
+/// Predict transcription time for the given slices without starting any work.
+/// Prefers a measured per-model realtime factor from this machine's history and
+/// falls back to a static per-family default when there is too little history.
+#[tauri::command]
+async fn estimate_transcription(
+    state: State<'_, AppState>,
+    slice_ids: Vec<i64>,
+) -> Result<TranscriptionEstimate, ApiError> {
+    // Fixed per-file overhead (model/session warmup, format conversion) in
+    // seconds, added to every slice on top of the audio/factor decode time.
+    const PER_FILE_OVERHEAD: f64 = 1.5;
+
+    let model = {
+        let config = state.config.lock().map_err(|e| ApiError {
+            message: format!("Failed to lock config: {}", e),
+            kind: "LockError".to_string(),
+        })?;
+        config.model_name.clone()
+    };
+
+    let db_guard = state.db.lock().map_err(|e| ApiError {
+        message: format!("Failed to lock database: {}", e),
+        kind: "LockError".to_string(),
+    })?;
+
+    let db = db_guard.as_ref().ok_or_else(|| ApiError {
+        message: "Database not initialized".to_string(),
+        kind: "DatabaseError".to_string(),
+    })?;
+
+    // Measured history beats any static table; fall back to defaults otherwise.
+    let (realtime_factor, basis) = match db.measured_realtime_factor(&model) {
+        Some(f) => (f, "measured".to_string()),
+        None => (default_realtime_factor(&model), "default".to_string()),
+    };
+
+    let slices = db.list_all_slices()?;
+
+    let mut per_slice: Vec<SliceEstimate> = Vec::new();
+    let mut total_seconds: f64 = 0.0;
+    let mut missing_duration_count: u32 = 0;
+
+    for id in &slice_ids {
+        let Some(s) = slices.iter().find(|s| s.id == Some(*id)) else {
+            continue;
+        };
+
+        let audio_seconds = match s.audio_time_length_seconds {
+            Some(d) if d > 0.0 => d,
+            _ => {
+                // No known duration; estimate from file size and flag it.
+                missing_duration_count += 1;
+                backend::transcribe::slice_audio_seconds(s.audio_time_length_seconds, s.audio_file_size)
+            }
+        };
+
+        let seconds = audio_seconds / realtime_factor + PER_FILE_OVERHEAD;
+        total_seconds += seconds;
+
+        // Cheap: refresh the cached column so the table estimate improves too.
+        if let Err(e) = db.update_slice_estimated_time(*id, seconds.round() as i32) {
+            tracing::warn!("Failed to update estimated_time_to_transcribe for slice {}: {}", id, e);
+        }
+
+        per_slice.push(SliceEstimate {
+            slice_id: *id,
+            name: s
+                .title
+                .clone()
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or_else(|| s.original_audio_file_name.clone()),
+            audio_seconds,
+            seconds,
+        });
+    }
+
+    Ok(TranscriptionEstimate {
+        total_seconds,
+        per_slice,
+        basis,
+        realtime_factor,
+        missing_duration_count,
+        model,
+    })
 }
 
 #[tauri::command]
@@ -1823,6 +1933,7 @@ pub fn run() {
             search_recordings,
             transcribe_many,
             transcribe_slices,
+            estimate_transcription,
             get_transcription_progress,
             export_transcribed_text,
             export_audio,

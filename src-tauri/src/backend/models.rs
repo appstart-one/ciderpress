@@ -135,6 +135,27 @@ pub struct TranscriptionProgress {
     pub total_audio_seconds: f64, // total audio duration across all selected slices
 }
 
+/// Per-slice transcription time estimate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SliceEstimate {
+    pub slice_id: i64,
+    pub name: String,
+    pub audio_seconds: f64,
+    pub seconds: f64,
+}
+
+/// Predicted transcription time for a set of slices, computed without
+/// actually running transcription.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptionEstimate {
+    pub total_seconds: f64,
+    pub per_slice: Vec<SliceEstimate>,
+    pub basis: String, // "measured" | "default"
+    pub realtime_factor: f64,
+    pub missing_duration_count: u32,
+    pub model: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Label {
     pub id: Option<i64>,

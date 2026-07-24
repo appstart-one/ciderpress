@@ -39,10 +39,12 @@ import {
   ThemeIcon,
   Transition,
   Box,
-  Popover
+  Popover,
+  ScrollArea,
+  Divider
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink, IconPlus, IconMusic, IconTypography, IconFilterOff } from '@tabler/icons-react';
+import { IconSearch, IconFileText, IconTrash, IconEdit, IconX, IconCheck, IconChevronUp, IconChevronDown, IconPlayerPlay, IconPencil, IconBug, IconWaveSquare, IconClock, IconCircleCheck, IconAlertCircle, IconDownload, IconColumns, IconNotebook, IconUpload, IconBulb, IconExternalLink, IconPlus, IconMusic, IconTypography, IconFilterOff, IconHourglass } from '@tabler/icons-react';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { QuillEditor } from '../components/QuillEditor';
 import { AudioPlayer } from '../components/AudioPlayer';
@@ -119,6 +121,22 @@ interface TranscriptionProgress {
   total_audio_seconds: number; // total audio duration across all selected slices
 }
 
+interface SliceEstimate {
+  slice_id: number;
+  name: string;
+  audio_seconds: number;
+  seconds: number;
+}
+
+interface TranscriptionEstimate {
+  total_seconds: number;
+  per_slice: SliceEstimate[];
+  basis: string; // "measured" | "default"
+  realtime_factor: number;
+  missing_duration_count: number;
+  model: string;
+}
+
 type SortField = keyof Slice;
 type SortDirection = 'asc' | 'desc';
 
@@ -172,6 +190,11 @@ export default function Slices() {
   const [addSliceOpened, { open: openAddSlice, close: closeAddSlice }] = useDisclosure(false);
   const [newSliceTitle, setNewSliceTitle] = useState('');
   const [newSliceContent, setNewSliceContent] = useState('');
+
+  // Estimate Time modal state
+  const [estimateOpened, { open: openEstimate, close: closeEstimate }] = useDisclosure(false);
+  const [estimate, setEstimate] = useState<TranscriptionEstimate | null>(null);
+  const [estimating, setEstimating] = useState(false);
 
   // Deseret alphabet Easter egg state (display-only, resets on app restart)
   const [deseretMode, setDeseretMode] = useState(false);
@@ -588,6 +611,32 @@ export default function Slices() {
         color: 'red',
         icon: <IconX size={16} />,
       });
+    }
+  };
+
+  const estimateSelected = async () => {
+    if (selectedSlices.length === 0) return;
+
+    setEstimating(true);
+    try {
+      const result = await invoke<TranscriptionEstimate>('estimate_transcription', {
+        sliceIds: selectedSlices,
+      });
+      setEstimate(result);
+      openEstimate();
+      // The backend refreshed estimated_time_to_transcribe on these slices;
+      // reload so the table column reflects the new estimates.
+      loadSlices();
+    } catch (error) {
+      console.error('Estimate error:', error);
+      notifications.show({
+        title: 'Error',
+        message: `Failed to estimate transcription time: ${error}`,
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    } finally {
+      setEstimating(false);
     }
   };
 
@@ -1473,6 +1522,16 @@ export default function Slices() {
                 Transcribe Selected
               </Button>
               <Button
+                variant="light"
+                leftSection={<IconHourglass size={16} />}
+                onClick={estimateSelected}
+                loading={estimating}
+                disabled={selectedSlices.length === 0 || (transcriptionProgress?.is_active ?? false)}
+                title="Predict how long transcription will take, without starting it"
+              >
+                Estimate Time
+              </Button>
+              <Button
                 variant="outline"
                 color="teal"
                 leftSection={<IconDownload size={16} />}
@@ -2042,6 +2101,65 @@ export default function Slices() {
               Create Text Slice
             </Button>
           </Stack>
+        </Modal>
+
+        {/* Estimated Transcription Time Modal */}
+        <Modal
+          opened={estimateOpened}
+          onClose={closeEstimate}
+          title="Estimated transcription time"
+          size="lg"
+        >
+          {estimate && (
+            <Stack gap="md">
+              <Text size="xl" fw={700}>
+                ~{formatAudioLength(estimate.total_seconds)} for {estimate.per_slice.length} file{estimate.per_slice.length === 1 ? '' : 's'}
+                {' / '}
+                {formatAudioLength(estimate.per_slice.reduce((sum, s) => sum + s.audio_seconds, 0))} of audio
+              </Text>
+
+              <Text size="sm" c="dimmed">
+                {estimate.basis === 'measured'
+                  ? `Based on your past ${estimate.model} runs on this machine (~${estimate.realtime_factor.toFixed(1)}x realtime)`
+                  : `Default estimate — no transcription history for ${estimate.model} yet (~${estimate.realtime_factor.toFixed(1)}x realtime)`}
+              </Text>
+
+              {estimate.missing_duration_count > 0 && (
+                <Text size="sm" c="orange">
+                  {estimate.missing_duration_count} file{estimate.missing_duration_count === 1 ? '' : 's'} had unknown length; estimated from file size.
+                </Text>
+              )}
+
+              <Divider />
+
+              <ScrollArea.Autosize mah={320}>
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>File</Table.Th>
+                      <Table.Th>Audio length</Table.Th>
+                      <Table.Th>Est. time</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {estimate.per_slice.map((s) => (
+                      <Table.Tr key={s.slice_id}>
+                        <Table.Td>{s.name}</Table.Td>
+                        <Table.Td>{formatAudioLength(s.audio_seconds)}</Table.Td>
+                        <Table.Td>~{formatAudioLength(s.seconds)}</Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea.Autosize>
+
+              <Group justify="flex-end">
+                <Button variant="light" onClick={closeEstimate}>
+                  Close
+                </Button>
+              </Group>
+            </Stack>
+          )}
         </Modal>
 
         {/* Deseret Alphabet Easter Egg Modal */}

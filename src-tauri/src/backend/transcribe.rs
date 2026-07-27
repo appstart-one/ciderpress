@@ -88,6 +88,123 @@ pub fn wait_if_paused() {
     super::parakeet::wait_while_paused();
 }
 
+// ---------------------------------------------------------------------------
+// Run ownership.
+//
+// The progress state and the pause/stop atomics above are process-global
+// singletons, so exactly one run may be in flight at a time — otherwise the
+// manual path and the background auto-transcriber corrupt each other's counts.
+// A plain `Mutex<()>` is the whole mechanism: `MutexGuard`'s Drop releases
+// ownership on every exit path, including the early returns and `break`s in
+// the run loop.
+// ---------------------------------------------------------------------------
+
+static RUN_LOCK: Mutex<()> = Mutex::new(());
+
+/// Take ownership of the transcription engine, waiting for the current owner.
+/// Callers that want to preempt should `request_stop()` first.
+pub fn lock_run() -> std::sync::MutexGuard<'static, ()> {
+    // A panic inside a run poisons the lock; recover rather than wedging
+    // transcription for the rest of the session.
+    RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Take ownership only if nobody else holds it. `None` means a run is active.
+pub fn try_lock_run() -> Option<std::sync::MutexGuard<'static, ()>> {
+    match RUN_LOCK.try_lock() {
+        Ok(g) => Some(g),
+        Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
+/// Transcribe a batch of slices start to finish, driving the shared progress
+/// state. Blocking; the caller must already hold the run lock.
+///
+/// Shared by the manual `transcribe_slices` command and the background
+/// auto-transcriber so the two cannot drift in how they handle stop, failure
+/// accounting or progress bookkeeping.
+///
+/// Returns the ids that failed, which the auto-transcriber uses to avoid
+/// retrying an unreadable file on every pass. A run stopped by the user
+/// reports no failures — abandoning a file is not the same as failing it.
+pub fn run_batch_blocking(
+    config: &Config,
+    db_path: &std::path::Path,
+    slice_ids: Vec<i64>,
+) -> Vec<i64> {
+    let mut failed_ids = Vec::new();
+
+    let db = match Database::new(db_path) {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::error!("Failed to open database for transcription run: {}", e);
+            return failed_ids;
+        }
+    };
+
+    let slices = db.list_all_slices().unwrap_or_default();
+    let find = |id: &i64| slices.iter().find(|s| s.id == Some(*id));
+
+    let estimated_total_seconds: u32 = slice_ids
+        .iter()
+        .filter_map(find)
+        .map(|s| s.estimated_time_to_transcribe as u32)
+        .sum();
+
+    // Duration-weighted overall progress; prefers real measured duration and
+    // falls back to the file-size heuristic when it is missing.
+    let total_audio_seconds: f64 = slice_ids
+        .iter()
+        .filter_map(find)
+        .map(|s| slice_audio_seconds(s.audio_time_length_seconds, s.audio_file_size))
+        .sum();
+
+    let bytes_per_second_rate = db.get_transcription_speed().unwrap_or(34000.0);
+
+    // Also clears any pause/stop left over from a previous run.
+    init_transcription_progress_with_logging(
+        &slice_ids,
+        slice_ids.len() as u32,
+        estimated_total_seconds,
+        bytes_per_second_rate,
+        total_audio_seconds,
+        &config.model_name,
+    );
+
+    let engine = TranscriptionEngine::new(config, &db);
+    for slice_id in slice_ids {
+        // Control point between files: hold while paused, then bail out of the
+        // run entirely if a stop was requested.
+        wait_if_paused();
+        if is_stop_requested() {
+            tracing::info!("Transcription run stopped by user before slice {}", slice_id);
+            break;
+        }
+
+        if let Err(e) = engine.transcribe_slice_sync(slice_id) {
+            // A user-initiated stop that aborts the in-flight slice must NOT be
+            // recorded as a failure — the slice stays untranscribed and its
+            // partial text is discarded.
+            if is_stop_requested() {
+                tracing::info!("Slice {} abandoned due to user stop", slice_id);
+                break;
+            }
+            tracing::error!("Failed to transcribe slice {}: {}", slice_id, e);
+            mark_slice_failed();
+            failed_ids.push(slice_id);
+        } else {
+            mark_slice_completed();
+        }
+    }
+
+    // Complete or stopped — either way the UI returns to idle and everything
+    // already transcribed is saved.
+    clear_transcription_progress();
+
+    failed_ids
+}
+
 /// Get the current transcription progress
 pub fn get_transcription_progress() -> Option<TranscriptionProgress> {
     let mut progress = TRANSCRIPTION_PROGRESS.lock().unwrap().clone();

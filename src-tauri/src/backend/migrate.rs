@@ -399,6 +399,40 @@ impl<'a> MigrationEngine<'a> {
         Ok(m4a_files)
     }
 
+    /// Pick up audio recorded since the last pass, without any of the
+    /// user-facing migration ceremony (no MIGRATION_PROGRESS, no summary).
+    /// Safe to call on a timer: `process_m4a_file` skips files already in the
+    /// database, so re-scanning is a no-op beyond the directory walk.
+    ///
+    /// Returns the number of newly copied files. A missing or unreadable Voice
+    /// Memos folder yields 0 rather than an error — the background worker must
+    /// not crash-loop when an external volume disappears or access is revoked.
+    pub fn scan_for_new_audio(&self, db: &Database) -> Result<u32> {
+        // Refresh Apple's metadata first so new memos get their title and date.
+        let apple_db_path = self.config.voice_memo_root_path().join("CloudRecordings.db");
+        if apple_db_path.exists() {
+            if let Some(path) = apple_db_path.to_str() {
+                if let Err(e) = db.copy_zcloudrecording_table(path) {
+                    tracing::warn!("Auto-scan: could not refresh ZCLOUDRECORDING: {}", e);
+                }
+            }
+        }
+
+        let mut added = 0u32;
+        for file in self.scan_m4a_files(&self.config.voice_memo_root_path())? {
+            match self.process_m4a_file(&file, db) {
+                Ok(ProcessResult::Copied(_)) => added += 1,
+                Ok(ProcessResult::Skipped) => {}
+                Err(e) => tracing::warn!("Auto-scan: failed to process {:?}: {}", file, e),
+            }
+        }
+
+        if added > 0 {
+            info!("Auto-scan picked up {} new recording(s)", added);
+        }
+        Ok(added)
+    }
+
     fn process_m4a_file(&self, m4a_file_path: &Path, db: &Database) -> Result<ProcessResult> {
         let filename = m4a_file_path.file_name()
             .and_then(|f| f.to_str())

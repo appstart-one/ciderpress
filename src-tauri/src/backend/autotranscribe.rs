@@ -1,0 +1,243 @@
+// VoiceMemoLiberator - Voice memo transcription and management tool
+// Copyright (C) 2026 APPSTART LLC
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+//! Background auto-transcription.
+//!
+//! One long-lived thread that, while enabled, keeps transcribing untranscribed
+//! slices one at a time and rescans the Voice Memos folder for new recordings
+//! on a timer. It shares the transcription engine with the manual path via the
+//! run lock in [`super::transcribe`], so the two are never in flight at once.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use tracing::{info, warn};
+
+use super::config::Config;
+use super::database::Database;
+use super::migrate::MigrationEngine;
+use super::transcribe;
+
+/// How often to look for newly recorded audio once the backlog is drained.
+const SCAN_INTERVAL: Duration = Duration::from_secs(10 * 60);
+
+/// Idle tick. Short so toggling the checkbox feels immediate without needing a
+/// condvar; the thread is asleep essentially all of this time.
+const TICK: Duration = Duration::from_secs(5);
+
+/// How many slices to claim per batch. Bounded so the run lock is released
+/// periodically (letting a manual run in without waiting for the whole backlog)
+/// and so the progress bar shows a meaningful "n of m" rather than "1 of 1".
+const BATCH: usize = 25;
+
+static ENABLED: AtomicBool = AtomicBool::new(false);
+static WORKER_STARTED: AtomicBool = AtomicBool::new(false);
+/// True while the background worker owns the run lock. Lets the stop/disable
+/// paths tell "the auto-transcriber is running" from "the user is running a
+/// manual batch", which otherwise look identical from the outside.
+static AUTO_OWNS_RUN: AtomicBool = AtomicBool::new(false);
+
+pub fn is_enabled() -> bool {
+    ENABLED.load(Ordering::SeqCst)
+}
+
+/// True while the background worker is the one transcribing.
+pub fn owns_run() -> bool {
+    AUTO_OWNS_RUN.load(Ordering::SeqCst)
+}
+
+/// Whether flipping the switch should also stop the run that is in flight.
+///
+/// Only when the background worker owns it — a manual batch the user started
+/// from the Slices screen must survive someone unchecking the box.
+fn should_stop_run(enabled: bool, auto_owns_run: bool) -> bool {
+    !enabled && auto_owns_run
+}
+
+/// Turn continuous transcription on or off. Disabling stops an in-flight auto
+/// run at its next control point; a manual run in flight is left alone.
+pub fn set_enabled(enabled: bool) {
+    ENABLED.store(enabled, Ordering::SeqCst);
+    info!("Auto-transcribe {}", if enabled { "enabled" } else { "disabled" });
+    if should_stop_run(enabled, owns_run()) {
+        transcribe::request_stop();
+    }
+}
+
+/// Spawn the worker thread. Idempotent — repeated calls are ignored, so
+/// toggling the checkbox rapidly cannot start a second worker.
+pub fn start() {
+    if WORKER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("auto-transcribe".into())
+        .spawn(worker)
+        .expect("failed to spawn auto-transcribe worker");
+}
+
+/// Ask the OS to schedule this thread behind anything the user is waiting on.
+///
+/// UTILITY rather than BACKGROUND deliberately: BACKGROUND also throttles I/O
+/// hard enough that a long transcription looks hung to someone watching the
+/// progress number tick.
+#[cfg(target_os = "macos")]
+fn lower_thread_priority() {
+    // SAFETY: sets the QoS class of the calling thread; no memory involved.
+    let rc = unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0)
+    };
+    if rc == 0 {
+        info!("Auto-transcribe worker running at QOS_CLASS_UTILITY");
+    } else {
+        warn!("Could not set worker QoS class (rc={}), falling back to nice", rc);
+        // SAFETY: setpriority on the current thread; failure is reported via rc.
+        unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 10) };
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn lower_thread_priority() {
+    info!("Auto-transcribe worker: no thread-priority mechanism on this platform");
+}
+
+fn worker() {
+    lower_thread_priority();
+
+    // Rescan on the first idle pass rather than waiting out a full interval.
+    let mut last_scan: Option<Instant> = None;
+
+    // Slices that failed to transcribe this session. Without this, one
+    // unreadable file at the head of the queue would be retried forever and
+    // nothing behind it would ever run. Session-scoped on purpose: a restart
+    // gives a file another chance, since the user may have fixed it.
+    let mut failed: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    loop {
+        if !is_enabled() {
+            std::thread::sleep(TICK);
+            continue;
+        }
+
+        // Config is reloaded each pass so a model or folder change from the
+        // Settings screen is picked up without any plumbing between them.
+        let config = match Config::load() {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Auto-transcribe: could not load config: {}", e);
+                std::thread::sleep(TICK);
+                continue;
+            }
+        };
+        let db_path = config.ciderpress_home_path().join("CiderPress-db.sqlite");
+
+        // A manual run owns the engine — wait it out and pick up afterwards.
+        let Some(_run) = transcribe::try_lock_run() else {
+            std::thread::sleep(TICK);
+            continue;
+        };
+
+        let db = match Database::new(&db_path) {
+            Ok(db) => db,
+            Err(e) => {
+                warn!("Auto-transcribe: could not open database: {}", e);
+                drop(_run);
+                std::thread::sleep(TICK);
+                continue;
+            }
+        };
+
+        let next_batch = |db: &Database, failed: &std::collections::HashSet<i64>| -> Vec<i64> {
+            db.untranscribed_slice_ids()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|id| !failed.contains(id))
+                .take(BATCH)
+                .collect()
+        };
+
+        let mut pending = next_batch(&db, &failed);
+
+        if pending.is_empty() {
+            let due = last_scan.map_or(true, |t| t.elapsed() >= SCAN_INTERVAL);
+            if due {
+                last_scan = Some(Instant::now());
+                let engine = MigrationEngine::new(&config);
+                match engine.scan_for_new_audio(&db) {
+                    Ok(0) => {}
+                    Ok(n) => {
+                        info!("Auto-transcribe: {} new recording(s) queued", n);
+                        pending = next_batch(&db, &failed);
+                    }
+                    Err(e) => warn!("Auto-transcribe: scan failed: {}", e),
+                }
+            }
+        }
+
+        if pending.is_empty() {
+            drop(_run);
+            std::thread::sleep(TICK);
+            continue;
+        }
+
+        // Held for the whole batch: the run lock guard `_run` is still alive,
+        // and this flag tells stop/disable which path to take.
+        AUTO_OWNS_RUN.store(true, Ordering::SeqCst);
+        let just_failed = transcribe::run_batch_blocking(&config, &db_path, pending);
+        AUTO_OWNS_RUN.store(false, Ordering::SeqCst);
+
+        if !just_failed.is_empty() {
+            warn!(
+                "Auto-transcribe: {} slice(s) failed and will be skipped this session: {:?}",
+                just_failed.len(),
+                just_failed
+            );
+            failed.extend(just_failed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabling_only_stops_the_run_the_worker_owns() {
+        // Pure predicate, so this asserts the rule without touching the global
+        // stop flag that the rest of the suite shares.
+        assert!(should_stop_run(false, true), "unchecking stops our own run");
+        assert!(
+            !should_stop_run(false, false),
+            "unchecking must not stop a manual run"
+        );
+        assert!(!should_stop_run(true, true), "enabling never stops anything");
+        assert!(!should_stop_run(true, false));
+    }
+
+    #[test]
+    fn run_lock_is_exclusive_and_released_on_drop() {
+        let held = transcribe::try_lock_run().expect("lock should be free");
+        assert!(
+            transcribe::try_lock_run().is_none(),
+            "a second acquire must fail while a run is in flight"
+        );
+        drop(held);
+        assert!(
+            transcribe::try_lock_run().is_some(),
+            "lock must be free again once the guard drops"
+        );
+    }
+}

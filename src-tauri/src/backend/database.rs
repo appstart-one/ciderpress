@@ -481,6 +481,21 @@ impl Database {
         }
     }
 
+    /// Every slice still awaiting transcription, oldest first.
+    ///
+    /// Returns the whole list rather than a page so the caller can skip ids it
+    /// has already seen fail without a dynamic `NOT IN` clause. These are bare
+    /// row ids — even a corpus of tens of thousands is a trivial allocation.
+    pub fn untranscribed_slice_ids(&self) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM slices WHERE transcribed = 0 ORDER BY id")?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<i64>, _>>()?;
+        Ok(ids)
+    }
+
     /// Corpus-wide totals for the Auto-Transcribe screen, in one pass.
     ///
     /// `audio_time_length_seconds` is a nullable migration-added column that is
@@ -1426,6 +1441,21 @@ mod tests {
             "300s known + 120s filled from 2 MiB, got {}",
             t.transcribed_audio_seconds
         );
+    }
+
+    #[test]
+    fn test_untranscribed_slice_ids() {
+        let (db, _temp_dir) = create_test_database();
+        assert!(db.untranscribed_slice_ids().unwrap().is_empty());
+
+        let a = db.insert_slice(&create_test_slice("a.m4a")).unwrap();
+        let mut done = create_test_slice("b.m4a");
+        done.transcribed = true;
+        db.insert_slice(&done).unwrap();
+        let c = db.insert_slice(&create_test_slice("c.m4a")).unwrap();
+
+        // Only the untranscribed rows, oldest first, so the queue is stable.
+        assert_eq!(db.untranscribed_slice_ids().unwrap(), vec![a, c]);
     }
 
     #[test]

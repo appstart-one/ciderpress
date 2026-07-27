@@ -431,79 +431,18 @@ async fn transcribe_slices(
         return Ok(());
     }
 
-    // Calculate estimated total time for progress tracking
-    let estimated_total_seconds: u32 = filtered_slice_ids.iter()
-        .filter_map(|id| slices.iter().find(|s| s.id == Some(*id)))
-        .map(|s| s.estimated_time_to_transcribe as u32)
-        .sum();
-
-    // Total audio duration across all selected slices, for duration-weighted
-    // overall progress. Prefers each slice's real measured duration; falls back
-    // to a file-size heuristic when it is missing.
-    let total_audio_seconds: f64 = filtered_slice_ids.iter()
-        .filter_map(|id| slices.iter().find(|s| s.id == Some(*id)))
-        .map(|s| backend::transcribe::slice_audio_seconds(s.audio_time_length_seconds, s.audio_file_size))
-        .sum();
-
     // Clone the database connection for the background task
     let db_path = config.ciderpress_home_path().join("CiderPress-db.sqlite");
-    let total_slices = filtered_slice_ids.len() as u32;
-
-    // Clone data for the closure
-    let model_name = config.model_name.clone();
-    let slice_ids_for_log = filtered_slice_ids.clone();
 
     // Spawn the transcription work in a blocking thread pool
     tokio::task::spawn_blocking(move || {
-        // Create a new database connection for this task
-        match Database::new(&db_path) {
-            Ok(db) => {
-                // Get transcription speed from historical data
-                let bytes_per_second_rate = db.get_transcription_speed().unwrap_or(34000.0);
-
-                // Initialize progress tracking with logging
-                backend::transcribe::init_transcription_progress_with_logging(
-                    &slice_ids_for_log,
-                    total_slices,
-                    estimated_total_seconds,
-                    bytes_per_second_rate,
-                    total_audio_seconds,
-                    &model_name,
-                );
-
-                let transcription_engine = TranscriptionEngine::new(&config, &db);
-                for slice_id in filtered_slice_ids {
-                    // Control point between files: hold while paused, then bail
-                    // out of the run entirely if a stop was requested.
-                    backend::transcribe::wait_if_paused();
-                    if backend::transcribe::is_stop_requested() {
-                        tracing::info!("Transcription run stopped by user before slice {}", slice_id);
-                        break;
-                    }
-                    // Use the sync version since we're in a blocking context
-                    if let Err(e) = transcription_engine.transcribe_slice_sync(slice_id) {
-                        // A user-initiated stop that aborts the in-flight slice
-                        // must NOT be recorded as a failure (the slice stays
-                        // untranscribed, its partial text discarded).
-                        if backend::transcribe::is_stop_requested() {
-                            tracing::info!("Slice {} abandoned due to user stop", slice_id);
-                            break;
-                        }
-                        tracing::error!("Failed to transcribe slice {}: {}", slice_id, e);
-                        backend::transcribe::mark_slice_failed();
-                    } else {
-                        backend::transcribe::mark_slice_completed();
-                    }
-                }
-                // Mark transcription as complete (or stopped — either way the
-                // UI returns to idle; completed transcripts are already saved).
-                backend::transcribe::clear_transcription_progress();
-            }
-            Err(e) => {
-                tracing::error!("Failed to create database connection for transcription: {}", e);
-                backend::transcribe::clear_transcription_progress();
-            }
-        }
+        // A manual run takes precedence: ask whoever holds the engine (the
+        // background auto-transcriber, in practice) to stand down at its next
+        // control point, then wait for it. `run_batch_blocking` clears the stop
+        // flag as it initializes, so this cannot leak into our own run.
+        backend::transcribe::request_stop();
+        let _run = backend::transcribe::lock_run();
+        backend::transcribe::run_batch_blocking(&config, &db_path, filtered_slice_ids);
     });
 
     // Return immediately so the UI can update
@@ -666,9 +605,35 @@ async fn resume_transcription() -> Result<(), ApiError> {
 /// Stop an in-progress transcription run. Already-completed transcripts are
 /// kept; the file currently mid-flight is abandoned (its partial text is
 /// discarded and the slice stays untranscribed).
+///
+/// If the background auto-transcriber owns the run, Stop also switches auto
+/// mode off — otherwise the worker would simply pick the file back up on its
+/// next tick and Stop would not mean stop.
 #[tauri::command]
-async fn stop_transcription() -> Result<(), ApiError> {
+async fn stop_transcription(state: State<'_, AppState>) -> Result<(), ApiError> {
+    if backend::autotranscribe::owns_run() {
+        set_auto_transcribe_enabled(state, false).await?;
+    }
     backend::transcribe::request_stop();
+    Ok(())
+}
+
+/// Turn continuous background transcription on or off, persisting the choice.
+#[tauri::command]
+async fn set_auto_transcribe_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), ApiError> {
+    let updated = {
+        let mut config = state.config.lock().map_err(|e| ApiError {
+            message: format!("Failed to lock config: {}", e),
+            kind: "LockError".to_string(),
+        })?;
+        config.auto_transcribe_enabled = enabled;
+        config.clone()
+    };
+    updated.save()?;
+    backend::autotranscribe::set_enabled(enabled);
     Ok(())
 }
 
@@ -1971,6 +1936,8 @@ pub fn run() {
         }
     };
 
+    let auto_transcribe_enabled = config.auto_transcribe_enabled;
+
     let app_state = AppState {
         config: Mutex::new(config),
         db: Mutex::new(db),
@@ -1998,6 +1965,7 @@ pub fn run() {
             estimate_transcription,
             get_transcription_progress,
             get_auto_transcribe_status,
+            set_auto_transcribe_enabled,
             pause_transcription,
             resume_transcription,
             stop_transcription,
@@ -2037,9 +2005,14 @@ pub fn run() {
             import_audio_slice,
             import_text_file_slice
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // Initialize global app handle for event emission
             init_app_handle(app.handle().clone());
+
+            // Background auto-transcription. The worker thread always runs; it
+            // sits idle unless the user has switched the feature on.
+            backend::autotranscribe::set_enabled(auto_transcribe_enabled);
+            backend::autotranscribe::start();
 
             // Set window title with app version
             if let Some(window) = app.get_webview_window("main") {

@@ -21,6 +21,7 @@
 //! on a timer. It shares the transcription engine with the manual path via the
 //! run lock in [`super::transcribe`], so the two are never in flight at once.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -114,17 +115,26 @@ fn lower_thread_priority() {
     info!("Auto-transcribe worker: no thread-priority mechanism on this platform");
 }
 
+/// Oldest-first queue minus the slices that already failed this session,
+/// capped at one batch. Skipping is what keeps a single unreadable file at the
+/// head of the queue from being retried forever, starving everything behind it.
+fn select_batch(untranscribed: Vec<i64>, failed: &HashSet<i64>) -> Vec<i64> {
+    untranscribed
+        .into_iter()
+        .filter(|id| !failed.contains(id))
+        .take(BATCH)
+        .collect()
+}
+
 fn worker() {
     lower_thread_priority();
 
     // Rescan on the first idle pass rather than waiting out a full interval.
     let mut last_scan: Option<Instant> = None;
 
-    // Slices that failed to transcribe this session. Without this, one
-    // unreadable file at the head of the queue would be retried forever and
-    // nothing behind it would ever run. Session-scoped on purpose: a restart
-    // gives a file another chance, since the user may have fixed it.
-    let mut failed: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    // Slices that failed to transcribe this session. Session-scoped on purpose:
+    // a restart gives a file another chance, since the user may have fixed it.
+    let mut failed: HashSet<i64> = HashSet::new();
 
     loop {
         if !is_enabled() {
@@ -160,13 +170,8 @@ fn worker() {
             }
         };
 
-        let next_batch = |db: &Database, failed: &std::collections::HashSet<i64>| -> Vec<i64> {
-            db.untranscribed_slice_ids()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|id| !failed.contains(id))
-                .take(BATCH)
-                .collect()
+        let next_batch = |db: &Database, failed: &HashSet<i64>| -> Vec<i64> {
+            select_batch(db.untranscribed_slice_ids().unwrap_or_default(), failed)
         };
 
         let mut pending = next_batch(&db, &failed);
@@ -225,6 +230,35 @@ mod tests {
         );
         assert!(!should_stop_run(true, true), "enabling never stops anything");
         assert!(!should_stop_run(true, false));
+    }
+
+    #[test]
+    fn failed_slices_are_skipped_but_do_not_block_the_queue() {
+        let queue: Vec<i64> = (1..=5).collect();
+
+        // Nothing failed yet: straight through, oldest first.
+        assert_eq!(select_batch(queue.clone(), &HashSet::new()), queue);
+
+        // The head failed — the rest must still run, or one bad file starves
+        // the entire backlog behind it.
+        let failed: HashSet<i64> = [1].into_iter().collect();
+        assert_eq!(select_batch(queue.clone(), &failed), vec![2, 3, 4, 5]);
+
+        // Scattered failures.
+        let failed: HashSet<i64> = [2, 4].into_iter().collect();
+        assert_eq!(select_batch(queue.clone(), &failed), vec![1, 3, 5]);
+
+        // Everything failed: idle, not a spin.
+        let failed: HashSet<i64> = queue.iter().copied().collect();
+        assert!(select_batch(queue, &failed).is_empty());
+    }
+
+    #[test]
+    fn batches_are_capped() {
+        let queue: Vec<i64> = (1..=(BATCH as i64 * 3)).collect();
+        let batch = select_batch(queue, &HashSet::new());
+        assert_eq!(batch.len(), BATCH, "the run lock must be released periodically");
+        assert_eq!(batch[0], 1, "oldest first");
     }
 
     #[test]

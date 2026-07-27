@@ -930,10 +930,16 @@ impl<'a> TranscriptionEngine<'a> {
             audio_path.to_string()
         };
 
-        // Use the current runtime handle to run the async transcription
-        // This works in spawn_blocking context
-        let handle = tokio::runtime::Handle::current();
-        handle.block_on(self.real_transcribe(&transcription_path))
+        // Reuse the caller's runtime when there is one — the manual path runs
+        // inside `spawn_blocking`, so a handle is in scope. The auto-transcribe
+        // worker is a bare std::thread with no ambient runtime at all, and
+        // `Handle::current()` panics there, which used to kill the worker for
+        // the rest of the process.
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle.block_on(self.real_transcribe(&transcription_path)),
+            Err(_) => tokio::runtime::Runtime::new()?
+                .block_on(self.real_transcribe(&transcription_path)),
+        }
     }
 
     /// Extract the first N seconds of audio file and return the path (stream copy, no re-encoding)
@@ -1073,6 +1079,48 @@ mod tests {
     use tempfile::TempDir;
     use std::fs;
     
+    /// The auto-transcribe worker is a plain `std::thread` with no Tokio
+    /// runtime in scope. `sync_transcribe` used to call `Handle::current()`,
+    /// which panics there and took the whole worker thread down with it.
+    ///
+    /// Real audio, real model, real bare thread — the only shape of test that
+    /// would have caught it.
+    ///
+    /// `cargo test --lib -- --ignored --nocapture transcribes_from_a_plain_thread`
+    #[test]
+    #[ignore]
+    fn transcribes_from_a_plain_thread_without_a_tokio_runtime() {
+        let audio = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("test-audio")
+            .join("20250427 162429-5441EC7D.m4a");
+        assert!(audio.exists(), "missing test audio: {}", audio.display());
+
+        // The user's real config, for the configured model — but pointed at a
+        // throwaway home so the test cannot touch the real database. Model
+        // files live under ~/.ciderpress/models regardless, so the already
+        // downloaded model is reused rather than re-fetched.
+        let mut config = Config::load().expect("config should load");
+        let temp = TempDir::new().unwrap();
+        config.ciderpress_home = temp.path().to_string_lossy().to_string();
+
+        let text = std::thread::Builder::new()
+            .name("plain-thread".into())
+            .spawn(move || {
+                let db = Database::new(&temp.path().join("test.sqlite")).unwrap();
+                let engine = TranscriptionEngine::new(&config, &db);
+                engine.sync_transcribe(audio.to_str().unwrap())
+            })
+            .unwrap()
+            .join()
+            .expect("the worker thread must not panic")
+            .expect("transcription should succeed");
+
+        println!("transcript: {}", text);
+        assert!(!text.trim().is_empty(), "transcription produced no text");
+    }
+
     #[test]
     fn test_word_count() {
         let text = "Hello world, this is a test.";

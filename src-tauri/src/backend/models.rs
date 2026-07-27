@@ -176,6 +176,15 @@ pub struct AutoTranscribeStatus {
     pub model: String,
     pub current_file: Option<String>,
     pub current_fraction: f32,
+    /// What the background worker is doing or waiting on, in plain language.
+    pub activity: String,
+    /// Which end of the backlog the worker is working from.
+    pub order: String,
+    /// Everything known about the file in flight, so the screen can show the
+    /// same metadata the Slices table does.
+    pub current_slice: Option<Slice>,
+    pub current_slice_elapsed_seconds: u32,
+    pub current_slice_estimated_seconds: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

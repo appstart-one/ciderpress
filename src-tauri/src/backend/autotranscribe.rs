@@ -22,7 +22,9 @@
 //! run lock in [`super::transcribe`], so the two are never in flight at once.
 
 use std::collections::HashSet;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
@@ -51,6 +53,21 @@ static WORKER_STARTED: AtomicBool = AtomicBool::new(false);
 /// manual batch", which otherwise look identical from the outside.
 static AUTO_OWNS_RUN: AtomicBool = AtomicBool::new(false);
 
+/// What the worker is doing or waiting on, in the user's words. "Enabled but
+/// nothing happening" has several very different causes (a manual run holds the
+/// engine, the backlog is drained, the config won't load) and a screen that
+/// just says "idle" gives no way to tell them apart.
+static ACTIVITY: Mutex<&'static str> = Mutex::new("Starting up…");
+
+fn set_activity(msg: &'static str) {
+    *ACTIVITY.lock().unwrap_or_else(|e| e.into_inner()) = msg;
+}
+
+/// The current activity/waiting message for the Auto-Transcribe screen.
+pub fn activity() -> &'static str {
+    *ACTIVITY.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::SeqCst)
 }
@@ -72,6 +89,13 @@ fn should_stop_run(enabled: bool, auto_owns_run: bool) -> bool {
 /// run at its next control point; a manual run in flight is left alone.
 pub fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::SeqCst);
+    // Set here rather than waiting for the worker's next tick, so the screen
+    // reacts to the switch immediately.
+    set_activity(if enabled {
+        "Starting up…"
+    } else {
+        "Auto-transcribe is off."
+    });
     info!("Auto-transcribe {}", if enabled { "enabled" } else { "disabled" });
     if should_stop_run(enabled, owns_run()) {
         transcribe::request_stop();
@@ -138,6 +162,7 @@ fn worker() {
 
     loop {
         if !is_enabled() {
+            set_activity("Auto-transcribe is off.");
             std::thread::sleep(TICK);
             continue;
         }
@@ -148,6 +173,7 @@ fn worker() {
             Ok(c) => c,
             Err(e) => {
                 warn!("Auto-transcribe: could not load config: {}", e);
+                set_activity("Waiting — the settings file could not be read.");
                 std::thread::sleep(TICK);
                 continue;
             }
@@ -156,6 +182,7 @@ fn worker() {
 
         // A manual run owns the engine — wait it out and pick up afterwards.
         let Some(_run) = transcribe::try_lock_run() else {
+            set_activity("Waiting for the transcription you started to finish.");
             std::thread::sleep(TICK);
             continue;
         };
@@ -164,6 +191,7 @@ fn worker() {
             Ok(db) => db,
             Err(e) => {
                 warn!("Auto-transcribe: could not open database: {}", e);
+                set_activity("Waiting — the database could not be opened.");
                 drop(_run);
                 std::thread::sleep(TICK);
                 continue;
@@ -171,7 +199,10 @@ fn worker() {
         };
 
         let next_batch = |db: &Database, failed: &HashSet<i64>| -> Vec<i64> {
-            select_batch(db.untranscribed_slice_ids().unwrap_or_default(), failed)
+            let queue = db
+                .untranscribed_slice_ids(&config.auto_transcribe_order)
+                .unwrap_or_default();
+            select_batch(queue, failed)
         };
 
         let mut pending = next_batch(&db, &failed);
@@ -180,6 +211,7 @@ fn worker() {
             let due = last_scan.map_or(true, |t| t.elapsed() >= SCAN_INTERVAL);
             if due {
                 last_scan = Some(Instant::now());
+                set_activity("Checking Voice Memos for new recordings…");
                 let engine = MigrationEngine::new(&config);
                 match engine.scan_for_new_audio(&db) {
                     Ok(0) => {}
@@ -193,6 +225,13 @@ fn worker() {
         }
 
         if pending.is_empty() {
+            if failed.is_empty() {
+                set_activity("Everything is transcribed — watching for new recordings.");
+            } else {
+                set_activity(
+                    "Waiting — every remaining file failed to transcribe this session. Restart CiderPress to retry them.",
+                );
+            }
             drop(_run);
             std::thread::sleep(TICK);
             continue;
@@ -201,8 +240,27 @@ fn worker() {
         // Held for the whole batch: the run lock guard `_run` is still alive,
         // and this flag tells stop/disable which path to take.
         AUTO_OWNS_RUN.store(true, Ordering::SeqCst);
-        let just_failed = transcribe::run_batch_blocking(&config, &db_path, pending);
+        set_activity("Transcribing.");
+        // A panic inside the engine used to take the whole worker thread with
+        // it — the feature then looked permanently "on" but did nothing until
+        // the app was restarted. Contain it, drop the batch, keep going.
+        let batch = pending.clone();
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            transcribe::run_batch_blocking(&config, &db_path, batch)
+        }));
         AUTO_OWNS_RUN.store(false, Ordering::SeqCst);
+
+        let just_failed = match outcome {
+            Ok(ids) => ids,
+            Err(_) => {
+                warn!("Auto-transcribe: the transcription engine panicked; skipping this batch");
+                set_activity("Recovering from a transcription error…");
+                // The run never reached its own cleanup, so the UI would other-
+                // wise stay stuck on the file that blew up.
+                transcribe::clear_transcription_progress();
+                pending
+            }
+        };
 
         if !just_failed.is_empty() {
             warn!(
@@ -259,6 +317,92 @@ mod tests {
         let batch = select_batch(queue, &HashSet::new());
         assert_eq!(batch.len(), BATCH, "the run lock must be released periodically");
         assert_eq!(batch[0], 1, "oldest first");
+    }
+
+    /// End to end on the worker's own terms: a real recording, the configured
+    /// model, `run_batch_blocking` called from a bare `std::thread` exactly as
+    /// the worker calls it, and the transcript read back out of the database.
+    ///
+    /// `cargo test --lib -- --ignored --nocapture worker_thread_transcribes`
+    #[test]
+    #[ignore]
+    fn worker_thread_transcribes_a_real_recording_end_to_end() {
+        use super::super::models::Slice;
+        use std::path::PathBuf;
+        use tempfile::TempDir;
+
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("test-audio")
+            .join("20250427 162429-5441EC7D.m4a");
+        assert!(source.exists(), "missing test audio: {}", source.display());
+
+        // Throwaway home so the real database is never touched; the model cache
+        // lives elsewhere, so the configured model is reused as-is.
+        let mut config = Config::load().expect("config should load");
+        let temp = TempDir::new().unwrap();
+        config.ciderpress_home = temp.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(config.audio_dir()).unwrap();
+        let name = "20250427 162429-5441EC7D.m4a";
+        std::fs::copy(&source, config.audio_dir().join(name)).unwrap();
+
+        let db_path = temp.path().join("test.sqlite");
+        let db = Database::new(&db_path).unwrap();
+        let slice_id = db
+            .insert_slice(&Slice {
+                id: None,
+                original_audio_file_name: name.to_string(),
+                title: None,
+                transcribed: false,
+                audio_file_size: std::fs::metadata(&source).unwrap().len() as i64,
+                audio_file_type: "m4a".to_string(),
+                estimated_time_to_transcribe: 10,
+                audio_time_length_seconds: None,
+                transcription: None,
+                transcription_time_taken: None,
+                transcription_word_count: None,
+                transcription_model: None,
+                recording_date: None,
+            })
+            .unwrap();
+
+        assert_eq!(
+            db.untranscribed_slice_ids("oldest").unwrap(),
+            vec![slice_id],
+            "the slice must be visible to the worker's queue query"
+        );
+
+        let (cfg, path) = (config.clone(), db_path.clone());
+        let failed = std::thread::Builder::new()
+            .name("auto-transcribe-test".into())
+            .spawn(move || transcribe::run_batch_blocking(&cfg, &path, vec![slice_id]))
+            .unwrap()
+            .join()
+            .expect("the worker thread must not panic");
+
+        assert!(failed.is_empty(), "slice {} failed to transcribe", slice_id);
+
+        let slice = db
+            .list_all_slices()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == Some(slice_id))
+            .unwrap();
+        assert!(slice.transcribed, "slice was not marked transcribed");
+        let text = slice.transcription.unwrap_or_default();
+        println!("transcript: {}", text);
+        assert!(!text.trim().is_empty(), "no transcript was saved");
+        assert!(
+            db.untranscribed_slice_ids("oldest").unwrap().is_empty(),
+            "the queue must drain, or the worker would loop on the same file"
+        );
+        assert!(
+            !transcribe::get_transcription_progress()
+                .map(|p| p.is_active)
+                .unwrap_or(false),
+            "progress must go inactive when the run ends, or the screen stays stuck on this file"
+        );
     }
 
     #[test]

@@ -539,13 +539,19 @@ async fn estimate_transcription(
 async fn get_auto_transcribe_status(
     state: State<'_, AppState>,
 ) -> Result<AutoTranscribeStatus, ApiError> {
-    let (enabled, model) = {
+    let (enabled, model, order) = {
         let config = state.config.lock().map_err(|e| ApiError {
             message: format!("Failed to lock config: {}", e),
             kind: "LockError".to_string(),
         })?;
-        (config.auto_transcribe_enabled, config.model_name.clone())
+        (
+            config.auto_transcribe_enabled,
+            config.model_name.clone(),
+            config.auto_transcribe_order.clone(),
+        )
     };
+
+    let progress = get_transcription_progress_fn();
 
     let totals = {
         let db_guard = state.db.lock().map_err(|e| ApiError {
@@ -558,11 +564,15 @@ async fn get_auto_transcribe_status(
         })?;
         let totals = db.auto_transcribe_totals()?;
         let (factor, basis) = db.realtime_factor_with_basis(&model);
-        (totals, factor, basis)
+        // Metadata for the file in flight, so the screen can show what it is
+        // working on rather than just a filename.
+        let current = match progress.as_ref().and_then(|p| p.current_slice_id) {
+            Some(id) => db.get_slice(id).unwrap_or(None),
+            None => None,
+        };
+        (totals, factor, basis, current)
     };
-    let (totals, realtime_factor, estimate_basis) = totals;
-
-    let progress = get_transcription_progress_fn();
+    let (totals, realtime_factor, estimate_basis, current_slice) = totals;
 
     Ok(AutoTranscribeStatus {
         enabled,
@@ -578,7 +588,46 @@ async fn get_auto_transcribe_status(
         model,
         current_file: progress.as_ref().and_then(|p| p.current_slice_name.clone()),
         current_fraction: progress.as_ref().map(|p| p.current_slice_fraction).unwrap_or(0.0),
+        activity: backend::autotranscribe::activity().to_string(),
+        order,
+        current_slice,
+        current_slice_elapsed_seconds: progress
+            .as_ref()
+            .map(|p| p.current_slice_elapsed_seconds)
+            .unwrap_or(0),
+        current_slice_estimated_seconds: progress
+            .as_ref()
+            .map(|p| p.current_slice_estimated_seconds)
+            .unwrap_or(0),
     })
+}
+
+/// Choose which end of the backlog the background worker works from. Takes
+/// effect on the next batch — the file in flight is always finished first.
+#[tauri::command]
+async fn set_auto_transcribe_order(
+    state: State<'_, AppState>,
+    order: String,
+) -> Result<(), ApiError> {
+    if !backend::database::Database::ORDER_CLAUSES
+        .iter()
+        .any(|(name, _)| *name == order)
+    {
+        return Err(ApiError {
+            message: format!("Unknown transcription order: {}", order),
+            kind: "ValidationError".to_string(),
+        });
+    }
+    let updated = {
+        let mut config = state.config.lock().map_err(|e| ApiError {
+            message: format!("Failed to lock config: {}", e),
+            kind: "LockError".to_string(),
+        })?;
+        config.auto_transcribe_order = order;
+        config.clone()
+    };
+    updated.save()?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1966,6 +2015,7 @@ pub fn run() {
             get_transcription_progress,
             get_auto_transcribe_status,
             set_auto_transcribe_enabled,
+            set_auto_transcribe_order,
             pause_transcription,
             resume_transcription,
             stop_transcription,

@@ -49,6 +49,7 @@ import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { QuillEditor } from '../components/QuillEditor';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { DraggableCard } from '../components/DraggableCard';
+import { formatAudioLength, formatFileSize, formatRecordingDate } from '../utils/format';
 
 // Deseret alphabet Easter egg: Latin-to-Deseret character substitution
 const DESERET_MAP: Record<string, string> = {
@@ -1117,54 +1118,13 @@ export default function Slices() {
     }
   };
 
-  const formatFileSize = (bytes: number) => {
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    if (bytes === 0) return '0 Bytes';
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
-  };
+  // Shared with the Auto-Transcribe screen so a file reads the same on both.
+  const formatDate = formatRecordingDate;
 
   const formatDuration = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-  };
-
-  const formatDate = (timestamp: number | null) => {
-    if (!timestamp) return '-';
-    const date = new Date(timestamp * 1000); // Convert Unix timestamp to milliseconds
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
-
-  // Format audio length as human-readable (1h 30m 5s) with zero components omitted
-  const formatAudioLength = (seconds: number | null): string => {
-    if (seconds === null || seconds === undefined) {
-      return '-';
-    }
-
-    const totalSeconds = Math.round(seconds);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const secs = totalSeconds % 60;
-
-    const parts: string[] = [];
-
-    if (hours > 0) {
-      parts.push(`${hours}h`);
-    }
-    if (minutes > 0) {
-      parts.push(`${minutes}m`);
-    }
-    if (secs > 0 || parts.length === 0) {
-      // Always show seconds if it's the only non-zero component or if all are zero
-      parts.push(`${secs}s`);
-    }
-
-    return parts.join(' ');
   };
 
   // Format elapsed time for progress display

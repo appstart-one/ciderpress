@@ -486,10 +486,46 @@ impl Database {
     /// Returns the whole list rather than a page so the caller can skip ids it
     /// has already seen fail without a dynamic `NOT IN` clause. These are bare
     /// row ids — even a corpus of tens of thousands is a trivial allocation.
-    pub fn untranscribed_slice_ids(&self) -> Result<Vec<i64>> {
+    /// SQL ordering for each queue order the user can pick, keyed by the value
+    /// stored in `Config::auto_transcribe_order`.
+    ///
+    /// `recording_date` and `audio_time_length_seconds` are both nullable
+    /// migration-added columns, so every clause sorts rows missing that value
+    /// last and falls back to `id` for a stable, repeatable order. Duration
+    /// falls back to the same ~1 MB/minute heuristic used everywhere else.
+    pub const ORDER_CLAUSES: [(&'static str, &'static str); 4] = [
+        ("oldest", "recording_date IS NULL, recording_date ASC, id ASC"),
+        ("newest", "recording_date IS NULL, recording_date DESC, id DESC"),
+        // Rows with neither a duration nor a size are sorted last in both
+        // directions: they are placeholders (iCloud files not downloaded yet,
+        // 0-byte leftovers) and would otherwise monopolise "shortest first"
+        // with a run of guaranteed failures.
+        (
+            "shortest",
+            "audio_file_size = 0 AND COALESCE(audio_time_length_seconds, 0) = 0, \
+             COALESCE(NULLIF(audio_time_length_seconds, 0), audio_file_size / 17476.0) ASC, id ASC",
+        ),
+        (
+            "longest",
+            "audio_file_size = 0 AND COALESCE(audio_time_length_seconds, 0) = 0, \
+             COALESCE(NULLIF(audio_time_length_seconds, 0), audio_file_size / 17476.0) DESC, id ASC",
+        ),
+    ];
+
+    /// The untranscribed queue, in the order the user asked for. An unknown
+    /// order falls back to the default rather than failing the run.
+    pub fn untranscribed_slice_ids(&self, order: &str) -> Result<Vec<i64>> {
+        let clause = Self::ORDER_CLAUSES
+            .iter()
+            .find(|(name, _)| *name == order)
+            .map(|(_, clause)| *clause)
+            .unwrap_or(Self::ORDER_CLAUSES[0].1);
         let mut stmt = self
             .conn
-            .prepare("SELECT id FROM slices WHERE transcribed = 0 ORDER BY id")?;
+            .prepare(&format!(
+                "SELECT id FROM slices WHERE transcribed = 0 ORDER BY {}",
+                clause
+            ))?;
         let ids = stmt
             .query_map([], |row| row.get(0))?
             .collect::<std::result::Result<Vec<i64>, _>>()?;
@@ -778,6 +814,36 @@ impl Database {
             slices.push(slice?);
         }
         Ok(slices)
+    }
+
+    /// One slice by id. The Auto-Transcribe screen polls this every couple of
+    /// seconds for the file in flight, so it must not drag the whole table (and
+    /// every transcript with it) into memory the way `list_all_slices` does.
+    pub fn get_slice(&self, slice_id: i64) -> Result<Option<Slice>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, original_audio_file_name, title, transcribed, audio_file_size, audio_file_type,
+                    estimated_time_to_transcribe, audio_time_length_seconds, NULL as transcription,
+                    transcription_time_taken, transcription_word_count, transcription_model, recording_date
+             FROM slices WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query_map([slice_id], |row| {
+            Ok(Slice {
+                id: Some(row.get("id")?),
+                original_audio_file_name: row.get("original_audio_file_name")?,
+                title: row.get("title")?,
+                transcribed: row.get::<_, i32>("transcribed")? != 0,
+                audio_file_size: row.get("audio_file_size")?,
+                audio_file_type: row.get("audio_file_type")?,
+                estimated_time_to_transcribe: row.get("estimated_time_to_transcribe")?,
+                audio_time_length_seconds: row.get("audio_time_length_seconds")?,
+                transcription: row.get("transcription")?,
+                transcription_time_taken: row.get("transcription_time_taken")?,
+                transcription_word_count: row.get("transcription_word_count")?,
+                transcription_model: row.get("transcription_model")?,
+                recording_date: row.get("recording_date")?,
+            })
+        })?;
+        rows.next().transpose().map_err(Into::into)
     }
 
     pub fn clear_all_slices(&self) -> Result<()> {
@@ -1446,7 +1512,7 @@ mod tests {
     #[test]
     fn test_untranscribed_slice_ids() {
         let (db, _temp_dir) = create_test_database();
-        assert!(db.untranscribed_slice_ids().unwrap().is_empty());
+        assert!(db.untranscribed_slice_ids("oldest").unwrap().is_empty());
 
         let a = db.insert_slice(&create_test_slice("a.m4a")).unwrap();
         let mut done = create_test_slice("b.m4a");
@@ -1455,7 +1521,74 @@ mod tests {
         let c = db.insert_slice(&create_test_slice("c.m4a")).unwrap();
 
         // Only the untranscribed rows, oldest first, so the queue is stable.
-        assert_eq!(db.untranscribed_slice_ids().unwrap(), vec![a, c]);
+        assert_eq!(db.untranscribed_slice_ids("oldest").unwrap(), vec![a, c]);
+    }
+
+    #[test]
+    fn test_get_slice_returns_the_metadata_the_auto_screen_shows() {
+        let (db, _temp_dir) = create_test_database();
+        let mut slice = create_test_slice("meta.m4a");
+        slice.title = Some("A title".to_string());
+        slice.recording_date = Some(1_702_765_082);
+        slice.audio_time_length_seconds = Some(3973.14);
+        let id = db.insert_slice(&slice).unwrap();
+
+        let got = db.get_slice(id).unwrap().expect("slice should be found");
+        assert_eq!(got.id, Some(id));
+        assert_eq!(got.title.as_deref(), Some("A title"));
+        assert_eq!(got.recording_date, Some(1_702_765_082));
+        assert_eq!(got.audio_time_length_seconds, Some(3973.14));
+        assert_eq!(got.audio_file_size, 1024);
+        assert_eq!(got.audio_file_type, "m4a");
+        // Deliberately not selected: the screen polls this every 2 seconds and
+        // has no use for the transcript text.
+        assert!(got.transcription.is_none());
+
+        assert!(db.get_slice(id + 999).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_untranscribed_slice_ids_honors_every_order() {
+        let (db, _temp_dir) = create_test_database();
+
+        // old + long, new + short. Every order must separate these two.
+        let mut old_long = create_test_slice("old-long.m4a");
+        old_long.recording_date = Some(1_000);
+        old_long.audio_time_length_seconds = Some(3600.0);
+        let old_long = db.insert_slice(&old_long).unwrap();
+
+        let mut new_short = create_test_slice("new-short.m4a");
+        new_short.recording_date = Some(2_000);
+        new_short.audio_time_length_seconds = Some(60.0);
+        let new_short = db.insert_slice(&new_short).unwrap();
+
+        // No duration at all — must still sort (by the size fallback) and never
+        // be dropped from the queue.
+        let unknown = db.insert_slice(&create_test_slice("unknown.m4a")).unwrap();
+
+        // Neither duration nor bytes: a placeholder that cannot be transcribed.
+        let mut empty = create_test_slice("empty.m4a");
+        empty.audio_file_size = 0;
+        let empty = db.insert_slice(&empty).unwrap();
+
+        let ids = |order| db.untranscribed_slice_ids(order).unwrap();
+        assert_eq!(ids("oldest")[0], old_long);
+        assert_eq!(ids("newest")[0], new_short);
+        assert_eq!(ids("shortest")[0], unknown, "1 KiB is the shortest real file");
+        assert_eq!(ids("longest")[0], old_long);
+        for order in ["shortest", "longest"] {
+            assert_eq!(
+                *ids(order).last().unwrap(),
+                empty,
+                "{}: zero-length placeholders must not lead the queue",
+                order
+            );
+        }
+
+        for order in ["oldest", "newest", "shortest", "longest", "nonsense"] {
+            assert_eq!(ids(order).len(), 4, "{} dropped a row", order);
+        }
+        assert_eq!(ids("nonsense"), ids("oldest"), "unknown orders fall back");
     }
 
     #[test]

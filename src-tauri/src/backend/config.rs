@@ -53,6 +53,13 @@ pub struct Config {
     /// Keep transcribing newly recorded audio in the background, forever.
     #[serde(default)]
     pub auto_transcribe_enabled: bool,
+    /// Which end of the backlog to work from — see `Database::ORDER_CLAUSES`.
+    #[serde(default = "default_auto_transcribe_order")]
+    pub auto_transcribe_order: String,
+}
+
+fn default_auto_transcribe_order() -> String {
+    "oldest".to_string()
 }
 
 fn default_lock_timeout_minutes() -> u32 {
@@ -82,6 +89,7 @@ impl Default for Config {
             password_hash: None,
             lock_timeout_minutes: 5,
             auto_transcribe_enabled: false,
+            auto_transcribe_order: default_auto_transcribe_order(),
         }
     }
 }

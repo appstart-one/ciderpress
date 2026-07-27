@@ -61,6 +61,7 @@ interface Config {
   password_hash: string | null;
   lock_timeout_minutes: number;
   auto_transcribe_enabled: boolean;
+  auto_transcribe_order: string;
 }
 
 // Base Whisper model information
@@ -95,6 +96,7 @@ export default function Settings() {
     password_hash: null,
     lock_timeout_minutes: 5,
     auto_transcribe_enabled: false,
+    auto_transcribe_order: 'oldest',
   });
   const [isLoading, setIsLoading] = useState(false);
   const [validationStatus, setValidationStatus] = useState<string>('NotFound');
@@ -340,6 +342,7 @@ export default function Settings() {
       password_hash: null,
       lock_timeout_minutes: 5,
       auto_transcribe_enabled: false,
+      auto_transcribe_order: 'oldest',
     };
     setConfig(defaultConfig);
     setValidationStatus('NotFound');

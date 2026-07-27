@@ -17,7 +17,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell, NavLink, Title, Group, ThemeIcon } from '@mantine/core';
-import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconNotebook, IconLock } from '@tabler/icons-react';
+import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconNotebook, IconLock, IconRefreshDot } from '@tabler/icons-react';
 import { invoke } from '@tauri-apps/api/core';
 import { notifications } from '@mantine/notifications';
 import { ThemeToggle } from './components/ThemeToggle';
@@ -29,12 +29,14 @@ import Stats from './pages/Stats';
 import Slices from './pages/Slices';
 import LabelSettings from './pages/LabelSettings';
 import NotebookLM from './pages/NotebookLM';
+import AutoTranscribe from './pages/AutoTranscribe';
 
 function Navigation() {
   const location = useLocation();
   
   const navItems = [
     { path: '/', label: 'Slices', icon: IconDatabase },
+    { path: '/auto', label: 'Auto', icon: IconRefreshDot },
     { path: '/stats', label: 'Stats', icon: IconChartBar },
     { path: '/migrate', label: 'Migrate', icon: IconDownload },
     { path: '/labels', label: 'Labels', icon: IconTags },
@@ -146,6 +148,7 @@ function App() {
             <ErrorBoundary>
               <Routes>
                 <Route path="/" element={<Slices />} />
+                <Route path="/auto" element={<AutoTranscribe />} />
                 <Route path="/migrate" element={<Migrate />} />
                 <Route path="/stats" element={<Stats />} />
                 <Route path="/settings" element={<Settings />} />

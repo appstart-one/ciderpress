@@ -79,3 +79,10 @@ Claude Features Suggestions.md
 *.db
 .beads-credential-key
 .beads/proxieddb/
+beads-backup-*.jsonl
+
+# Generated knowledge-graph output
+graphify-out/
+
+# Scratch
+fun.txt

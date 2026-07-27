@@ -59,6 +59,25 @@ export function formatDurationShort(seconds: number): string {
   return `${hours}h ${minutes}m`;
 }
 
+/**
+ * Transcription speed as a multiple of real time: "7× real time" means one
+ * minute of compute chews through seven minutes of audio.
+ *
+ * This is the same measurement as "time per hour of audio", turned inside out —
+ * a multiplier is the number people can hold in their head. Large factors drop
+ * the decimal, because the difference between 34.6× and 35× is noise on a
+ * figure averaged over a whole corpus.
+ */
+export function formatRealtimeFactor(factor: number): string {
+  if (!Number.isFinite(factor) || factor <= 0) return 'not measured yet';
+
+  const rounded = factor >= 10 ? Math.round(factor) : Number(factor.toFixed(1));
+  // A factor slow enough to round to zero is still not zero, and "0× real
+  // time" would read as "nothing is happening".
+  if (rounded === 0) return '<0.1× real time';
+  return `${rounded}× real time`;
+}
+
 function plural(n: number, unit: string): string {
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
 }

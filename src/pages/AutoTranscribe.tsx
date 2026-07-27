@@ -35,7 +35,11 @@ import {
   Title,
 } from '@mantine/core';
 import { IconInfoCircle, IconMoodCheck } from '@tabler/icons-react';
-import { formatDurationLong, formatDurationShort } from '../utils/duration';
+import {
+  formatDurationLong,
+  formatDurationShort,
+  formatRealtimeFactor,
+} from '../utils/duration';
 import { formatAudioLength, formatFileSize, formatRecordingDate } from '../utils/format';
 
 interface AutoTranscribeStatus {
@@ -47,6 +51,7 @@ interface AutoTranscribeStatus {
   transcribed_audio_seconds: number;
   total_words: number;
   seconds_per_audio_hour: number;
+  realtime_factor: number;
   estimated_remaining_seconds: number;
   estimate_basis: string;
   model: string;
@@ -211,6 +216,14 @@ export default function AutoTranscribe() {
                   label="of audio processed"
                 />
                 <Stat value={status.total_words.toLocaleString()} label="words transcribed" />
+                <Stat
+                  value={formatRealtimeFactor(status.realtime_factor)}
+                  label={
+                    status.estimate_basis === 'measured'
+                      ? 'transcription speed'
+                      : 'transcription speed (rough)'
+                  }
+                />
                 <Stat
                   value={formatDurationShort(status.seconds_per_audio_hour)}
                   label={

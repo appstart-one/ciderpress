@@ -170,6 +170,10 @@ pub struct AutoTranscribeStatus {
     pub total_words: i64,
     /// Wall-clock seconds to transcribe one hour of audio on this machine.
     pub seconds_per_audio_hour: f64,
+    /// The same throughput as a multiple of real time: audio seconds handled per
+    /// wall-clock second. 7.0 means a minute of compute transcribes seven
+    /// minutes of audio.
+    pub realtime_factor: f64,
     pub estimated_remaining_seconds: f64,
     /// "measured" once this machine has real history for the model, else "default".
     pub estimate_basis: String,

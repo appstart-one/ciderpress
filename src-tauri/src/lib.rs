@@ -583,6 +583,7 @@ async fn get_auto_transcribe_status(
         transcribed_audio_seconds: totals.transcribed_audio_seconds,
         total_words: totals.total_words,
         seconds_per_audio_hour: 3600.0 / realtime_factor,
+        realtime_factor,
         estimated_remaining_seconds: totals.pending_audio_seconds / realtime_factor,
         estimate_basis: estimate_basis.to_string(),
         model,

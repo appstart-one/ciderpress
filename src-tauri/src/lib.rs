@@ -29,7 +29,7 @@ use backend::{
     migrate::{MigrationEngine, get_audio_duration},
     transcribe::{TranscriptionEngine, get_transcription_progress as get_transcription_progress_fn},
     stats,
-    models::{ApiError, MigrationProgress, TranscriptionProgress, TranscriptionEstimate, SliceEstimate, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
+    models::{ApiError, MigrationProgress, TranscriptionProgress, TranscriptionEstimate, SliceEstimate, AutoTranscribeStatus, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
 };
 use walkdir::WalkDir;
 
@@ -510,30 +510,6 @@ async fn transcribe_slices(
     Ok(())
 }
 
-/// Static per-family realtime factor (audio seconds transcribed per second of
-/// processing) used only for the cold-start case, before this machine has
-/// enough measured history for the active model. Larger = faster.
-fn default_realtime_factor(model: &str) -> f64 {
-    let m = model.to_lowercase();
-    if m.starts_with("parakeet") {
-        25.0
-    } else if m.starts_with("large-v3-turbo") {
-        20.0
-    } else if m.starts_with("large") {
-        5.0
-    } else if m.starts_with("medium") {
-        8.0
-    } else if m.starts_with("small") {
-        15.0
-    } else if m.starts_with("base") {
-        22.0
-    } else if m.starts_with("tiny") {
-        30.0
-    } else {
-        10.0
-    }
-}
-
 /// Predict transcription time for the given slices without starting any work.
 /// Prefers a measured per-model realtime factor from this machine's history and
 /// falls back to a static per-family default when there is too little history.
@@ -565,10 +541,8 @@ async fn estimate_transcription(
     })?;
 
     // Measured history beats any static table; fall back to defaults otherwise.
-    let (realtime_factor, basis) = match db.measured_realtime_factor(&model) {
-        Some(f) => (f, "measured".to_string()),
-        None => (default_realtime_factor(&model), "default".to_string()),
-    };
+    let (realtime_factor, basis) = db.realtime_factor_with_basis(&model);
+    let basis = basis.to_string();
 
     let slices = db.list_all_slices()?;
 
@@ -617,6 +591,54 @@ async fn estimate_transcription(
         realtime_factor,
         missing_duration_count,
         model,
+    })
+}
+
+/// Everything the Auto-Transcribe screen shows, in one poll: corpus totals,
+/// throughput, backlog forecast, and what is being transcribed right now.
+#[tauri::command]
+async fn get_auto_transcribe_status(
+    state: State<'_, AppState>,
+) -> Result<AutoTranscribeStatus, ApiError> {
+    let (enabled, model) = {
+        let config = state.config.lock().map_err(|e| ApiError {
+            message: format!("Failed to lock config: {}", e),
+            kind: "LockError".to_string(),
+        })?;
+        (config.auto_transcribe_enabled, config.model_name.clone())
+    };
+
+    let totals = {
+        let db_guard = state.db.lock().map_err(|e| ApiError {
+            message: format!("Failed to lock database: {}", e),
+            kind: "LockError".to_string(),
+        })?;
+        let db = db_guard.as_ref().ok_or_else(|| ApiError {
+            message: "Database not initialized".to_string(),
+            kind: "DatabaseError".to_string(),
+        })?;
+        let totals = db.auto_transcribe_totals()?;
+        let (factor, basis) = db.realtime_factor_with_basis(&model);
+        (totals, factor, basis)
+    };
+    let (totals, realtime_factor, estimate_basis) = totals;
+
+    let progress = get_transcription_progress_fn();
+
+    Ok(AutoTranscribeStatus {
+        enabled,
+        is_running: progress.as_ref().map(|p| p.is_active).unwrap_or(false),
+        pending_count: totals.pending_count,
+        pending_audio_seconds: totals.pending_audio_seconds,
+        transcribed_count: totals.transcribed_count,
+        transcribed_audio_seconds: totals.transcribed_audio_seconds,
+        total_words: totals.total_words,
+        seconds_per_audio_hour: 3600.0 / realtime_factor,
+        estimated_remaining_seconds: totals.pending_audio_seconds / realtime_factor,
+        estimate_basis: estimate_basis.to_string(),
+        model,
+        current_file: progress.as_ref().and_then(|p| p.current_slice_name.clone()),
+        current_fraction: progress.as_ref().map(|p| p.current_slice_fraction).unwrap_or(0.0),
     })
 }
 
@@ -1975,6 +1997,7 @@ pub fn run() {
             transcribe_slices,
             estimate_transcription,
             get_transcription_progress,
+            get_auto_transcribe_status,
             pause_transcription,
             resume_transcription,
             stop_transcription,

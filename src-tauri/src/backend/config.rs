@@ -50,6 +50,9 @@ pub struct Config {
     pub password_hash: Option<String>,
     #[serde(default = "default_lock_timeout_minutes")]
     pub lock_timeout_minutes: u32,
+    /// Keep transcribing newly recorded audio in the background, forever.
+    #[serde(default)]
+    pub auto_transcribe_enabled: bool,
 }
 
 fn default_lock_timeout_minutes() -> u32 {
@@ -78,6 +81,7 @@ impl Default for Config {
             password_enabled: false,
             password_hash: None,
             lock_timeout_minutes: 5,
+            auto_transcribe_enabled: false,
         }
     }
 }

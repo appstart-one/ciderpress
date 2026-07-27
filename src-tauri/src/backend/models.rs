@@ -157,6 +157,27 @@ pub struct TranscriptionEstimate {
     pub model: String,
 }
 
+/// Everything the Auto-Transcribe screen displays, in one poll.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoTranscribeStatus {
+    pub enabled: bool,
+    /// A transcription run is in flight (auto or manual — they are mutually exclusive).
+    pub is_running: bool,
+    pub pending_count: u32,
+    pub pending_audio_seconds: f64,
+    pub transcribed_count: u32,
+    pub transcribed_audio_seconds: f64,
+    pub total_words: i64,
+    /// Wall-clock seconds to transcribe one hour of audio on this machine.
+    pub seconds_per_audio_hour: f64,
+    pub estimated_remaining_seconds: f64,
+    /// "measured" once this machine has real history for the model, else "default".
+    pub estimate_basis: String,
+    pub model: String,
+    pub current_file: Option<String>,
+    pub current_fraction: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Label {
     pub id: Option<i64>,

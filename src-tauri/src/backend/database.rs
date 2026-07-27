@@ -25,6 +25,40 @@ pub struct Database {
     conn: Connection,
 }
 
+/// Corpus-wide slice totals, split by transcribed / not.
+#[derive(Debug, Clone)]
+pub struct CorpusTotals {
+    pub pending_count: u32,
+    pub pending_audio_seconds: f64,
+    pub transcribed_count: u32,
+    pub transcribed_audio_seconds: f64,
+    pub total_words: i64,
+}
+
+/// Static per-family realtime factor (audio seconds transcribed per second of
+/// processing) used only for the cold-start case, before this machine has
+/// enough measured history for the active model. Larger = faster.
+pub fn default_realtime_factor(model: &str) -> f64 {
+    let m = model.to_lowercase();
+    if m.starts_with("parakeet") {
+        25.0
+    } else if m.starts_with("large-v3-turbo") {
+        20.0
+    } else if m.starts_with("large") {
+        5.0
+    } else if m.starts_with("medium") {
+        8.0
+    } else if m.starts_with("small") {
+        15.0
+    } else if m.starts_with("base") {
+        22.0
+    } else if m.starts_with("tiny") {
+        30.0
+    } else {
+        10.0
+    }
+}
+
 impl Database {
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         let conn = Connection::open(db_path)?;
@@ -436,6 +470,69 @@ impl Database {
         }
 
         Some(total_audio / total_time)
+    }
+
+    /// This machine's realtime factor for `model`, plus where the number came
+    /// from ("measured" | "default"). Measured history always wins.
+    pub fn realtime_factor_with_basis(&self, model: &str) -> (f64, &'static str) {
+        match self.measured_realtime_factor(model) {
+            Some(f) => (f, "measured"),
+            None => (default_realtime_factor(model), "default"),
+        }
+    }
+
+    /// Corpus-wide totals for the Auto-Transcribe screen, in one pass.
+    ///
+    /// `audio_time_length_seconds` is a nullable migration-added column that is
+    /// missing on plenty of older rows, so unknown-duration rows are summed
+    /// separately as bytes and converted via the same file-size heuristic the
+    /// progress code uses. Treating them as zero would silently under-report
+    /// how much audio is left.
+    pub fn auto_transcribe_totals(&self) -> Result<CorpusTotals> {
+        let (pending_count, pending_secs, pending_bytes, done_count, done_secs, done_bytes, words): (
+            i64, f64, i64, i64, f64, i64, i64,
+        ) = self.conn.query_row(
+            r#"
+            SELECT
+                COALESCE(SUM(CASE WHEN transcribed = 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN transcribed = 0 AND audio_time_length_seconds > 0
+                                  THEN audio_time_length_seconds ELSE 0 END), 0.0),
+                COALESCE(SUM(CASE WHEN transcribed = 0 AND COALESCE(audio_time_length_seconds, 0) <= 0
+                                  THEN audio_file_size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN transcribed = 1 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN transcribed = 1 AND audio_time_length_seconds > 0
+                                  THEN audio_time_length_seconds ELSE 0 END), 0.0),
+                COALESCE(SUM(CASE WHEN transcribed = 1 AND COALESCE(audio_time_length_seconds, 0) <= 0
+                                  THEN audio_file_size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN transcribed = 1
+                                  THEN COALESCE(transcription_word_count, 0) ELSE 0 END), 0)
+            FROM slices
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )?;
+
+        // Summing the unknown-duration bytes and converting once is identical to
+        // converting per row — the heuristic is linear in file size.
+        let fill = |bytes: i64| super::transcribe::slice_audio_seconds(None, bytes);
+
+        Ok(CorpusTotals {
+            pending_count: pending_count.max(0) as u32,
+            pending_audio_seconds: pending_secs + fill(pending_bytes),
+            transcribed_count: done_count.max(0) as u32,
+            transcribed_audio_seconds: done_secs + fill(done_bytes),
+            total_words: words,
+        })
     }
 
     /// Cheaply refresh the cached `estimated_time_to_transcribe` (seconds) for a
@@ -1275,6 +1372,83 @@ mod tests {
             db.measured_realtime_factor("base.en").is_none(),
             "1 sample is too little signal to measure"
         );
+    }
+
+    #[test]
+    fn test_auto_transcribe_totals() {
+        let (db, _temp_dir) = create_test_database();
+
+        // Empty corpus: everything zero, no NULL/SUM panic.
+        let empty = db.auto_transcribe_totals().unwrap();
+        assert_eq!(empty.pending_count, 0);
+        assert_eq!(empty.transcribed_count, 0);
+        assert_eq!(empty.total_words, 0);
+        assert_eq!(empty.pending_audio_seconds, 0.0);
+
+        // Pending, known duration.
+        let mut pending = create_test_slice("pending_known.m4a");
+        pending.audio_time_length_seconds = Some(120.0);
+        db.insert_slice(&pending).unwrap();
+
+        // Pending, NULL duration — must be filled from file size, not counted
+        // as zero. 1 MiB => 60s under the file-size heuristic.
+        let mut pending_null = create_test_slice("pending_null.m4a");
+        pending_null.audio_time_length_seconds = None;
+        pending_null.audio_file_size = 1_048_576;
+        db.insert_slice(&pending_null).unwrap();
+
+        // Transcribed, known duration + words.
+        let mut done = create_test_slice("done.m4a");
+        done.transcribed = true;
+        done.audio_time_length_seconds = Some(300.0);
+        done.transcription_word_count = Some(450);
+        db.insert_slice(&done).unwrap();
+
+        // Transcribed, NULL duration and NULL word count.
+        let mut done_null = create_test_slice("done_null.m4a");
+        done_null.transcribed = true;
+        done_null.audio_time_length_seconds = None;
+        done_null.audio_file_size = 2_097_152; // 2 MiB => 120s
+        done_null.transcription_word_count = None;
+        db.insert_slice(&done_null).unwrap();
+
+        let t = db.auto_transcribe_totals().unwrap();
+        assert_eq!(t.pending_count, 2);
+        assert_eq!(t.transcribed_count, 2);
+        assert_eq!(t.total_words, 450, "NULL word counts must not poison the sum");
+        assert!(
+            (t.pending_audio_seconds - 180.0).abs() < 1e-6,
+            "120s known + 60s filled from 1 MiB, got {}",
+            t.pending_audio_seconds
+        );
+        assert!(
+            (t.transcribed_audio_seconds - 420.0).abs() < 1e-6,
+            "300s known + 120s filled from 2 MiB, got {}",
+            t.transcribed_audio_seconds
+        );
+    }
+
+    #[test]
+    fn test_realtime_factor_with_basis_falls_back_to_default() {
+        let (db, _temp_dir) = create_test_database();
+
+        // No history for this model -> the static table, flagged as such.
+        let (factor, basis) = db.realtime_factor_with_basis("base.en");
+        assert_eq!(basis, "default");
+        assert_eq!(factor, default_realtime_factor("base.en"));
+
+        // Enough history -> measured wins.
+        for i in 0..3 {
+            let mut slice = create_test_slice(&format!("rtf_{}.m4a", i));
+            slice.transcribed = true;
+            slice.transcription_model = Some("base.en".to_string());
+            slice.audio_time_length_seconds = Some(200.0);
+            slice.transcription_time_taken = Some(20);
+            db.insert_slice(&slice).unwrap();
+        }
+        let (factor, basis) = db.realtime_factor_with_basis("base.en");
+        assert_eq!(basis, "measured");
+        assert!((factor - 10.0).abs() < 1e-6, "expected ~10x, got {}", factor);
     }
 
     #[test]

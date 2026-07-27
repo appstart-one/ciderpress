@@ -1066,13 +1066,6 @@ impl<'a> TranscriptionEngine<'a> {
     }
 }
 
-#[derive(serde::Serialize)]
-pub struct TranscribeProgress {
-    pub recording_id: i64,
-    pub completed: bool,
-    pub error: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1192,9 +1185,9 @@ mod tests {
             recording_date: None,
         };
 
-        let slice_id = db.insert_slice(&slice).unwrap();
+        let _slice_id = db.insert_slice(&slice).unwrap();
 
-        let engine = TranscriptionEngine::new(&config, &db);
+        let _engine = TranscriptionEngine::new(&config, &db);
 
         // Verify that the audio path construction works
         let expected_path = config.audio_dir().join(test_filename);

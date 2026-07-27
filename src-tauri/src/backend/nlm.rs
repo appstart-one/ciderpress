@@ -35,12 +35,6 @@ pub struct NlmStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NlmAccountInfo {
-    pub profile_name: String,
-    pub has_credentials: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NlmBrowserProfile {
     pub name: String,
     pub display_name: String,

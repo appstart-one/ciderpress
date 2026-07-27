@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::path::PathBuf;
 use tauri::{State, AppHandle, Emitter, Manager};
-use tracing::{info, error};
+use tracing::{info, debug, error};
 
 mod backend;
 
@@ -1958,7 +1958,8 @@ async fn open_url(url: String) -> Result<(), ApiError> {
 pub fn run() {
     // Load initial config
     let config = Config::load().expect("Failed to load config");
-    println!("Loaded config: {:?}", config);
+    // debug, not stdout: Config carries password_hash, and a clean launch is quiet.
+    debug!("Loaded config: {:?}", config);
     
     // Ensure CiderPress home exists
     if let Err(e) = config.ensure_ciderpress_home() {

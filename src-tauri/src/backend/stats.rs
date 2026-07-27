@@ -24,9 +24,5 @@ pub fn collect_stats(db: &Database) -> Result<Stats> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tempfile::TempDir;
-    use std::path::PathBuf;
-
     // Add tests here when we have sample data
 } 

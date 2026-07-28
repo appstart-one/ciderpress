@@ -19,11 +19,18 @@
 //! Downloads the Parakeet TDT v2 model (~460 MB, once) and transcribes a
 //! bundled 16 kHz mono sample, printing the transcript and timing.
 //!
-//!   cargo run --release --bin parakeet_smoke [-- <model-name> <wav-path>]
+//!   cargo run --release --example parakeet_smoke [-- <model-name> <wav-path>]
+//!
+//! An example rather than a `src/bin/` binary on purpose: Cargo auto-discovers
+//! `src/bin/*.rs` as bin targets, and the Tauri bundler then tries to copy
+//! every one of them into the .app. Universal builds only produce the
+//! `default-run` binary, so a second bin target breaks `tauri build
+//! --target universal-apple-darwin` outright. Examples are a separate target
+//! kind and are ignored by the bundler.
 
 // Reuse the exact production module (self-contained, no crate:: refs).
-// The bin only calls a subset of its API; silence dead-code for the rest.
-#[path = "../backend/parakeet.rs"]
+// The example only calls a subset of its API; silence dead-code for the rest.
+#[path = "../src/backend/parakeet.rs"]
 #[allow(dead_code)]
 mod parakeet;
 

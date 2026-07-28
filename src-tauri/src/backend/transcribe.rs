@@ -40,7 +40,7 @@ lazy_static::lazy_static! {
 // Run control (pause / stop) — UI-progress-aware wrappers.
 //
 // The raw atomic flags live in `parakeet.rs` (so the self-contained
-// `parakeet_smoke` binary keeps compiling); these wrappers add the
+// `parakeet_smoke` example keeps compiling); these wrappers add the
 // TranscriptionProgress bookkeeping the UI reads.
 // ---------------------------------------------------------------------------
 

@@ -34,7 +34,7 @@ use std::time::Duration;
 // ---------------------------------------------------------------------------
 // Run control flags (pause / stop for an in-progress transcription run)
 //
-// These live here rather than in `transcribe.rs` because `bin/parakeet_smoke.rs`
+// These live here rather than in `transcribe.rs` because `examples/parakeet_smoke.rs`
 // `#[path]`-includes this file as a self-contained module with no `crate::` /
 // `super::` references. Keeping the atomics + primitive helpers here lets both
 // the library and the smoke binary compile without changing `transcribe()`'s

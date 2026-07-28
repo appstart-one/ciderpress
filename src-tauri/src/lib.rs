@@ -1989,13 +1989,45 @@ async fn open_url(url: String) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Install the process-wide `tracing` subscriber.
+///
+/// Without this, every `tracing::info!`/`warn!`/`error!` in the backend is a
+/// no-op that formats nothing and goes nowhere — the macros looked like logging
+/// but produced no output anywhere.
+///
+/// Defaults to `warn`, deliberately: a normal launch must stay silent, and
+/// `info` across this codebase is chatty enough to bury anything that matters.
+/// Problems still surface, and `RUST_LOG` opens it up when diagnosing:
+///
+///   RUST_LOG=ciderpress=debug npm run tauri dev
+///
+/// This is separate from `logging::init_logging`, which writes the structured
+/// JSONL event log the app itself reads back. That keeps working unchanged.
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+
+    // try_init rather than init: a second call (or a test that installed its
+    // own subscriber) must not abort the app over logging setup.
+    if let Err(e) = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .try_init()
+    {
+        eprintln!("Failed to install tracing subscriber: {}", e);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything that logs, so early diagnostics are not silently dropped.
+    init_tracing();
+
     // Load initial config
     let config = Config::load().expect("Failed to load config");
     // debug, not stdout: Config carries password_hash, and a clean launch is quiet.
     debug!("Loaded config: {:?}", config);
-    
+
     // Ensure CiderPress home exists
     if let Err(e) = config.ensure_ciderpress_home() {
         eprintln!("Failed to create CiderPress home: {}", e);
@@ -2118,4 +2150,47 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+#[cfg(test)]
+mod tests {
+    /// A normal launch must stay silent (VoiceMemoLiberator-nh9 deliberately
+    /// made it so), while real problems still reach the terminal. An `info`
+    /// default would undo that: `info!` is used liberally across the backend,
+    /// including per-file transcription chatter.
+    ///
+    /// Asserting against the installed subscriber rather than the filter string,
+    /// so it fails if the wiring is wrong and not merely if the constant changes.
+    #[test]
+    fn tracing_default_is_quiet_but_still_surfaces_problems() {
+        // Install unconditionally, so running the suite with RUST_LOG set is a
+        // live check of the escalation path (INFO lines from other tests start
+        // appearing). Only the assertions below are default-specific.
+        super::init_tracing();
+
+        // Deterministic probe for the escalation path. Run
+        //   RUST_LOG=ciderpress_lib=info cargo test --lib -- --nocapture
+        // and this line appears; without RUST_LOG it must not. Emitting it here
+        // rather than relying on other tests' output avoids depending on test
+        // ordering, which cargo does not guarantee.
+        tracing::info!("tracing-escalation-probe");
+
+        if std::env::var("RUST_LOG").is_ok() {
+            // The default is what is under test; an inherited RUST_LOG would
+            // legitimately override it.
+            return;
+        }
+
+        assert!(
+            tracing::enabled!(tracing::Level::ERROR),
+            "errors must reach the terminal"
+        );
+        assert!(
+            tracing::enabled!(tracing::Level::WARN),
+            "warnings must reach the terminal"
+        );
+        assert!(
+            !tracing::enabled!(tracing::Level::INFO),
+            "info is on by default, which makes every launch noisy"
+        );
+    }
 }

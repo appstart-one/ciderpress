@@ -38,10 +38,19 @@ pub struct CorpusTotals {
 /// Static per-family realtime factor (audio seconds transcribed per second of
 /// processing) used only for the cold-start case, before this machine has
 /// enough measured history for the active model. Larger = faster.
+///
+/// These are cold-start guesses, and the cost of the two directions is not
+/// symmetric: too optimistic tells a user their backlog will take an hour when
+/// it takes thirteen, which reads as a broken feature. Too pessimistic merely
+/// under-promises and corrects itself as soon as measured history exists. So
+/// prefer the conservative end where there is real evidence.
 pub fn default_realtime_factor(model: &str) -> f64 {
     let m = model.to_lowercase();
     if m.starts_with("parakeet") {
-        25.0
+        // Was 25.0, which was never measured. Against 338 real parakeet-tdt
+        // transcriptions the corpus-weighted figure is ~1.9x, with individual
+        // files ranging 1.0x-7.0x; 25.0 overstated it by an order of magnitude.
+        2.0
     } else if m.starts_with("large-v3-turbo") {
         20.0
     } else if m.starts_with("large") {
@@ -1589,6 +1598,40 @@ mod tests {
             assert_eq!(ids(order).len(), 4, "{} dropped a row", order);
         }
         assert_eq!(ids("nonsense"), ids("oldest"), "unknown orders fall back");
+    }
+
+    /// The cold-start table is a set of guesses, and one of them was an order
+    /// of magnitude out. Pin the direction of the error: a default that
+    /// overstates throughput produces "Time to finish" forecasts that are wrong
+    /// by multiples, which is the failure users actually notice.
+    #[test]
+    fn parakeet_default_is_not_wildly_optimistic() {
+        // Measured across 338 real parakeet transcriptions: ~1.9x
+        // corpus-weighted. Allow generous headroom for faster hardware, but
+        // catch a return to the old unmeasured 25.0.
+        let f = default_realtime_factor("parakeet-tdt-0.6b-v2");
+        assert!(
+            f <= 6.0,
+            "parakeet cold-start factor {}x overstates measured ~1.9x badly \
+             enough to make first-run forecasts useless",
+            f
+        );
+        assert!(f > 0.0, "factor must be positive; it is a divisor");
+        // Applies to the whole family, not just the one id.
+        assert_eq!(f, default_realtime_factor("parakeet-tdt-0.6b-v3"));
+    }
+
+    /// Every entry is used as a divisor when forecasting, so a zero or negative
+    /// value would produce an infinite or negative remaining time.
+    #[test]
+    fn every_default_realtime_factor_is_positive() {
+        for m in [
+            "parakeet-tdt-0.6b-v2", "large-v3-turbo", "large-v3", "medium.en",
+            "small.en", "base.en", "tiny.en", "something-unknown",
+        ] {
+            let f = default_realtime_factor(m);
+            assert!(f > 0.0, "{} yielded a non-positive factor {}", m, f);
+        }
     }
 
     #[test]

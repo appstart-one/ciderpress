@@ -29,7 +29,7 @@ use backend::{
     migrate::{MigrationEngine, get_audio_duration},
     transcribe::{TranscriptionEngine, get_transcription_progress as get_transcription_progress_fn},
     stats,
-    models::{ApiError, MigrationProgress, TranscriptionProgress, TranscriptionEstimate, SliceEstimate, AutoTranscribeStatus, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
+    models::{ApiError, MigrationProgress, StrayWavCleanup, TranscriptionProgress, TranscriptionEstimate, SliceEstimate, AutoTranscribeStatus, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
 };
 use walkdir::WalkDir;
 
@@ -629,6 +629,40 @@ async fn set_auto_transcribe_order(
     };
     updated.save()?;
     Ok(())
+}
+
+/// Sweep intermediate WAVs that older builds left beside the source audio.
+///
+/// `dry_run` reports what would be removed without touching anything, so the UI
+/// can show a number before the user commits to deleting files.
+#[tauri::command]
+async fn cleanup_stray_wavs(
+    state: State<'_, AppState>,
+    dry_run: bool,
+) -> Result<StrayWavCleanup, ApiError> {
+    let audio_dir = {
+        let config = state.config.lock().map_err(|e| ApiError {
+            message: format!("Failed to lock config: {}", e),
+            kind: "LockError".to_string(),
+        })?;
+        config.audio_dir()
+    };
+
+    let db_guard = state.db.lock().map_err(|e| ApiError {
+        message: format!("Failed to lock database: {}", e),
+        kind: "LockError".to_string(),
+    })?;
+    let db = db_guard.as_ref().ok_or_else(|| ApiError {
+        message: "Database not initialized".to_string(),
+        kind: "DatabaseError".to_string(),
+    })?;
+
+    let (removed, bytes_freed) = backend::transcribe::cleanup_stray_wavs(&audio_dir, db, dry_run)?;
+    Ok(StrayWavCleanup {
+        removed: removed as u32,
+        bytes_freed,
+        dry_run,
+    })
 }
 
 #[tauri::command]
@@ -2015,6 +2049,7 @@ pub fn run() {
             transcribe_slices,
             estimate_transcription,
             get_transcription_progress,
+            cleanup_stray_wavs,
             get_auto_transcribe_status,
             set_auto_transcribe_enabled,
             set_auto_transcribe_order,

@@ -157,6 +157,15 @@ pub struct TranscriptionEstimate {
     pub model: String,
 }
 
+/// Result of sweeping intermediate WAVs left in the audio directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrayWavCleanup {
+    pub removed: u32,
+    pub bytes_freed: u64,
+    /// True when nothing was actually deleted — the counts are a preview.
+    pub dry_run: bool,
+}
+
 /// Everything the Auto-Transcribe screen displays, in one poll.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoTranscribeStatus {

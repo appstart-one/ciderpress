@@ -29,6 +29,121 @@ use super::database::Database;
 use super::logging;
 use super::models::{Transcript, TranscriptionProgress};
 
+/// Per-process counter making converted-WAV temp filenames unique.
+static WAV_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// An audio path ready to hand to the transcriber, owning any intermediate file
+/// created to produce it.
+///
+/// The distinction matters more than it looks: the conversion step is a no-op
+/// for inputs that are already WAV, in which case the path *is* the user's
+/// source recording. A blanket "delete the file when transcription finishes"
+/// would destroy the original. Only a file we created is ours to remove, and
+/// `Drop` is what guarantees it happens on every exit path — including the
+/// pause/stop early returns and the `?` on a failed decode.
+struct PreparedAudio {
+    path: String,
+    /// True only when `path` names a temporary we produced.
+    is_temp: bool,
+}
+
+impl PreparedAudio {
+    fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+impl Drop for PreparedAudio {
+    fn drop(&mut self) {
+        if !self.is_temp {
+            return;
+        }
+        match fs::remove_file(&self.path) {
+            Ok(()) => tracing::debug!("Removed intermediate WAV {}", self.path),
+            // Not fatal: the transcript is already saved by this point. Losing
+            // the temp file to a race or a permissions problem costs disk, not
+            // data, so warn rather than propagate.
+            Err(e) => tracing::warn!("Failed to remove intermediate WAV {}: {}", self.path, e),
+        }
+    }
+}
+
+/// Remove intermediate WAVs that older builds left in the audio directory.
+///
+/// Deliberately conservative, because `*.wav` in the audio dir is NOT
+/// self-evidently garbage: a recording imported as WAV lives there too, and is
+/// the user's only copy. A file is treated as a stray only when both hold:
+///
+///   1. a same-stem `.m4a` sits beside it — the exact pairing the old
+///      `with_extension("wav")` conversion produced, and
+///   2. no slice claims that filename as its own source recording.
+///
+/// Anything failing either test is left alone. `dry_run` reports what would go
+/// without touching the disk, so a caller can show the user first.
+pub fn cleanup_stray_wavs(
+    audio_dir: &std::path::Path,
+    db: &Database,
+    dry_run: bool,
+) -> Result<(usize, u64)> {
+    if !audio_dir.is_dir() {
+        return Ok((0, 0));
+    }
+
+    // Filenames the database considers real source audio. On a read failure,
+    // bail rather than fall back to an empty set: an empty set would make every
+    // paired WAV look unclaimed and turn a query error into data loss.
+    let claimed: std::collections::HashSet<String> = db
+        .list_all_slices()
+        .context("Refusing to sweep WAVs without the slice list to check against")?
+        .into_iter()
+        .map(|s| s.original_audio_file_name)
+        .collect();
+
+    let mut removed = 0usize;
+    let mut freed = 0u64;
+
+    for entry in fs::read_dir(audio_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        let is_wav = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+        if !is_wav {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if claimed.contains(name) {
+            continue;
+        }
+        // No source m4a beside it means we cannot attribute this WAV to the
+        // conversion step, so it is not ours to delete.
+        if !path.with_extension("m4a").exists() {
+            continue;
+        }
+
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        if dry_run {
+            removed += 1;
+            freed += size;
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                removed += 1;
+                freed += size;
+            }
+            Err(e) => tracing::warn!("Failed to remove stray WAV {}: {}", path.display(), e),
+        }
+    }
+
+    Ok((removed, freed))
+}
+
 // Global transcription progress state
 lazy_static::lazy_static! {
     static ref TRANSCRIPTION_PROGRESS: Arc<Mutex<Option<TranscriptionProgress>>> = Arc::new(Mutex::new(None));
@@ -643,16 +758,13 @@ impl<'a> TranscriptionEngine<'a> {
 
     // Replace mock transcription with actual simple-whisper integration
     fn mock_transcribe(&self, audio_path: &str) -> Result<String> {
-        // Convert M4A to WAV if needed
-        let transcription_path = if audio_path.ends_with(".m4a") {
-            self.convert_m4a_to_wav(audio_path)?
-        } else {
-            audio_path.to_string()
-        };
-        
+        // Convert M4A to WAV if needed; dropped at end of scope, removing the
+        // intermediate whether we return Ok or Err.
+        let input = self.prepare_audio(audio_path)?;
+
         // Use tokio runtime to handle the async transcription
         let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(self.real_transcribe(&transcription_path))
+        rt.block_on(self.real_transcribe(input.path()))
     }
 
     /// Run transcription for a single file.
@@ -757,12 +869,46 @@ impl<'a> TranscriptionEngine<'a> {
         }
     }
 
+    /// Resolve `audio_path` to something the transcriber can read, converting
+    /// only when necessary and taking ownership of the result if we did.
+    ///
+    /// Non-M4A inputs pass through untouched and are marked not-temp, so the
+    /// user's own recording is never a deletion candidate.
+    fn prepare_audio(&self, audio_path: &str) -> Result<PreparedAudio> {
+        if audio_path.ends_with(".m4a") {
+            Ok(PreparedAudio {
+                path: self.convert_m4a_to_wav(audio_path)?,
+                is_temp: true,
+            })
+        } else {
+            Ok(PreparedAudio {
+                path: audio_path.to_string(),
+                is_temp: false,
+            })
+        }
+    }
+
     /// Convert M4A file to WAV format (16 kHz mono PCM S16LE) using ffmpeg-next library
+    ///
+    /// The WAV goes to the system temp dir, never beside the source. It used to
+    /// land in the audio dir via `with_extension("wav")`, where nothing ever
+    /// removed it: a pure intermediate, rewritten on every run, accumulating one
+    /// copy per file transcribed. Callers should take the result through
+    /// `prepare_audio` so it is deleted when they are done with it.
     fn convert_m4a_to_wav(&self, m4a_path: &str) -> Result<String> {
         use ffmpeg_next::{format, codec, software, util::frame::audio::Audio, ChannelLayout};
 
         let m4a_pathbuf = PathBuf::from(m4a_path);
-        let wav_path = m4a_pathbuf.with_extension("wav");
+        let wav_path = env::temp_dir().join(format!(
+            "ciderpress_{}_{}.wav",
+            m4a_pathbuf
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("audio"),
+            // A timestamp alone collides when two conversions land in the same
+            // millisecond; the counter makes the name unique per process.
+            WAV_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
         let wav_path_str = wav_path.to_str().context("Invalid WAV path")?;
 
         tracing::info!("Converting {} to {}", m4a_path, wav_path.display());
@@ -911,24 +1057,16 @@ impl<'a> TranscriptionEngine<'a> {
     // Async transcription method that works with Tauri's runtime
     async fn async_transcribe(&self, audio_path: &str) -> Result<String> {
         // Convert M4A to WAV if needed
-        let transcription_path = if audio_path.ends_with(".m4a") {
-            self.convert_m4a_to_wav(audio_path)?
-        } else {
-            audio_path.to_string()
-        };
-        
+        let input = self.prepare_audio(audio_path)?;
+
         // Directly call the async transcription method
-        self.real_transcribe(&transcription_path).await
+        self.real_transcribe(input.path()).await
     }
 
     // Synchronous transcription method for blocking contexts
     fn sync_transcribe(&self, audio_path: &str) -> Result<String> {
         // Convert M4A to WAV if needed
-        let transcription_path = if audio_path.ends_with(".m4a") {
-            self.convert_m4a_to_wav(audio_path)?
-        } else {
-            audio_path.to_string()
-        };
+        let input = self.prepare_audio(audio_path)?;
 
         // Reuse the caller's runtime when there is one — the manual path runs
         // inside `spawn_blocking`, so a handle is in scope. The auto-transcribe
@@ -936,9 +1074,9 @@ impl<'a> TranscriptionEngine<'a> {
         // `Handle::current()` panics there, which used to kill the worker for
         // the rest of the process.
         match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.real_transcribe(&transcription_path)),
+            Ok(handle) => handle.block_on(self.real_transcribe(input.path())),
             Err(_) => tokio::runtime::Runtime::new()?
-                .block_on(self.real_transcribe(&transcription_path)),
+                .block_on(self.real_transcribe(input.path())),
         }
     }
 
@@ -1071,6 +1209,134 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
     use std::fs;
+
+    /// Build a slice row for `name` so the sweep sees it as claimed source audio.
+    fn claimed_slice(name: &str) -> crate::backend::models::Slice {
+        crate::backend::models::Slice {
+            id: None,
+            original_audio_file_name: name.to_string(),
+            title: None,
+            transcribed: false,
+            audio_file_size: 100,
+            audio_file_type: name.rsplit('.').next().unwrap_or("m4a").to_string(),
+            estimated_time_to_transcribe: 30,
+            audio_time_length_seconds: None,
+            transcription: None,
+            transcription_time_taken: None,
+            transcription_word_count: None,
+            transcription_model: None,
+            recording_date: None,
+        }
+    }
+
+    /// A converted WAV is an intermediate and must not survive the call that
+    /// produced it, but a WAV the user imported IS their recording — the only
+    /// copy — and deleting it would be data loss. The `is_temp` flag is the
+    /// entire safety mechanism, so pin both directions.
+    #[test]
+    fn prepared_audio_deletes_only_files_it_created() {
+        let dir = TempDir::new().unwrap();
+
+        let converted = dir.path().join("converted.wav");
+        fs::write(&converted, b"intermediate").unwrap();
+        {
+            let _owned = PreparedAudio {
+                path: converted.to_string_lossy().to_string(),
+                is_temp: true,
+            };
+        }
+        assert!(!converted.exists(), "intermediate WAV should be removed on drop");
+
+        let source = dir.path().join("user-recording.wav");
+        fs::write(&source, b"the user's only copy").unwrap();
+        {
+            let _borrowed = PreparedAudio {
+                path: source.to_string_lossy().to_string(),
+                is_temp: false,
+            };
+        }
+        assert!(
+            source.exists(),
+            "a source recording must never be deleted by the guard"
+        );
+    }
+
+    /// The sweep runs over a directory that holds both garbage and originals.
+    /// Getting this wrong destroys recordings, so enumerate every case.
+    #[test]
+    fn cleanup_stray_wavs_removes_only_paired_unclaimed_wavs() {
+        let dir = TempDir::new().unwrap();
+        let audio = dir.path().join("audio");
+        fs::create_dir_all(&audio).unwrap();
+        let db = Database::new(&dir.path().join("t.db")).unwrap();
+
+        // Stray: produced by the old conversion, m4a sits beside it, unclaimed.
+        fs::write(audio.join("memo1.m4a"), b"src").unwrap();
+        fs::write(audio.join("memo1.wav"), b"0123456789").unwrap();
+
+        // Imported WAV with no m4a beside it — a real recording.
+        fs::write(audio.join("imported.wav"), b"src").unwrap();
+
+        // Imported WAV that also has an m4a of the same stem. The filename is
+        // claimed by a slice, so the pairing must not condemn it.
+        fs::write(audio.join("both.m4a"), b"src").unwrap();
+        fs::write(audio.join("both.wav"), b"src").unwrap();
+        db.insert_slice(&claimed_slice("both.wav")).unwrap();
+
+        // Untouched by the sweep entirely.
+        fs::write(audio.join("keep.m4a"), b"src").unwrap();
+
+        let (n, freed) = cleanup_stray_wavs(&audio, &db, true).unwrap();
+        assert_eq!(n, 1, "dry run should find exactly the one stray");
+        assert_eq!(freed, 10, "should report the stray's byte count");
+        assert!(audio.join("memo1.wav").exists(), "dry run must not delete");
+
+        let (n, freed) = cleanup_stray_wavs(&audio, &db, false).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(freed, 10);
+
+        assert!(!audio.join("memo1.wav").exists(), "stray should be gone");
+        assert!(audio.join("imported.wav").exists(), "unpaired WAV is a source");
+        assert!(audio.join("both.wav").exists(), "claimed WAV is a source");
+        assert!(audio.join("memo1.m4a").exists(), "sources are never touched");
+        assert!(audio.join("keep.m4a").exists());
+    }
+
+    /// Converted output must land in temp, not beside the source. This is the
+    /// actual bug: the audio dir grew one WAV per file transcribed, forever.
+    #[test]
+    fn converted_wav_is_written_outside_the_audio_dir() {
+        let dir = TempDir::new().unwrap();
+        let audio = dir.path().join("audio");
+        fs::create_dir_all(&audio).unwrap();
+        let config = Config {
+            ciderpress_home: dir.path().to_string_lossy().to_string(),
+            ..Config::default()
+        };
+        let db = Database::new(&dir.path().join("t.db")).unwrap();
+        let engine = TranscriptionEngine::new(&config, &db);
+
+        let src = audio.join("memo.m4a");
+        fs::write(&src, b"not real audio").unwrap();
+
+        // Decoding fails on non-audio bytes; the path decision happens before
+        // any decoding, so assert on that rather than on a successful convert.
+        let prepared = engine.prepare_audio(src.to_str().unwrap());
+        if let Ok(p) = prepared {
+            assert!(
+                !PathBuf::from(p.path()).starts_with(&audio),
+                "converted WAV must not be written into the audio dir, got {}",
+                p.path()
+            );
+        }
+
+        // A non-m4a input passes through unchanged and unowned.
+        let wav = audio.join("already.wav");
+        fs::write(&wav, b"x").unwrap();
+        let p = engine.prepare_audio(wav.to_str().unwrap()).unwrap();
+        assert_eq!(p.path(), wav.to_str().unwrap());
+        assert!(!p.is_temp, "pass-through input must not be owned");
+    }
     
     /// The auto-transcribe worker is a plain `std::thread` with no Tokio
     /// runtime in scope. `sync_transcribe` used to call `Handle::current()`,

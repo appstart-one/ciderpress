@@ -240,6 +240,26 @@ if [ ${#ASSETS[@]} -eq 0 ]; then
     fi
 fi
 
+# --- Gate: never publish an artifact that fails verification ---
+# 0.3.0 shipped a DMG that was signed but never notarized, because nothing
+# checked the artifact before uploading it. ALLOW_UNNOTARIZED is deliberately
+# not honored here: a release must be fully notarized, no exceptions, even
+# though a local build is allowed to skip it.
+if [ ${#ASSETS[@]} -gt 0 ]; then
+    echo ""
+    echo "--- Verifying assets before publishing ---"
+    for asset in "${ASSETS[@]}"; do
+        if ! ALLOW_UNNOTARIZED=0 "$SCRIPT_DIR/verify-dmg.sh" "$asset"; then
+            echo ""
+            echo "Error: $asset is not fit to publish (see failures above)."
+            echo "Nothing has been tagged or released. Fix the artifact and re-run."
+            echo "Most likely cause: APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID were"
+            echo "not set during the build, so the DMG was never notarized."
+            exit 1
+        fi
+    done
+fi
+
 # --- Tag and release ---
 echo ""
 echo "--- Creating tag and GitHub release: $TAG ---"

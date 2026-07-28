@@ -22,6 +22,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { notifications } from '@mantine/notifications';
 import { ThemeToggle } from './components/ThemeToggle';
 import { RoutedErrorBoundary } from './components/ErrorBoundary';
+import BuildStamp from './components/BuildStamp';
 import { LockScreen, useLockScreen } from './components/LockScreen';
 import Settings from './pages/Settings';
 import Migrate from './pages/Migrate';
@@ -141,6 +142,7 @@ function App() {
                 <Navigation />
               </div>
               <LockNowButton />
+              <BuildStamp />
             </div>
           </AppShell.Navbar>
 

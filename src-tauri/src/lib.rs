@@ -29,7 +29,7 @@ use backend::{
     migrate::{MigrationEngine, get_audio_duration},
     transcribe::{TranscriptionEngine, get_transcription_progress as get_transcription_progress_fn},
     stats,
-    models::{ApiError, MigrationProgress, StrayWavCleanup, TranscriptionProgress, TranscriptionEstimate, SliceEstimate, AutoTranscribeStatus, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
+    models::{ApiError, BuildInfo, MigrationProgress, StrayWavCleanup, TranscriptionProgress, TranscriptionEstimate, SliceEstimate, AutoTranscribeStatus, Stats, RecordingWithTranscript, Slice, PreMigrationStats, Label, MigrationLogEntry, ModelDownloadProgress},
 };
 use walkdir::WalkDir;
 
@@ -629,6 +629,20 @@ async fn set_auto_transcribe_order(
     };
     updated.save()?;
     Ok(())
+}
+
+/// Git provenance of this build, stamped in by build.rs at compile time.
+///
+/// Values come from `env!`, so they are baked into the binary and need no
+/// runtime git availability — the shipped app has no repository to query.
+#[tauri::command]
+async fn get_build_info() -> Result<BuildInfo, ApiError> {
+    Ok(BuildInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        build_number: env!("CIDERPRESS_BUILD_NUMBER").to_string(),
+        commit_short: env!("CIDERPRESS_COMMIT_SHORT").to_string(),
+        commit_full: env!("CIDERPRESS_COMMIT_FULL").to_string(),
+    })
 }
 
 /// Sweep intermediate WAVs that older builds left beside the source audio.
@@ -2082,6 +2096,7 @@ pub fn run() {
             estimate_transcription,
             get_transcription_progress,
             cleanup_stray_wavs,
+            get_build_info,
             get_auto_transcribe_status,
             set_auto_transcribe_enabled,
             set_auto_transcribe_order,
@@ -2153,6 +2168,58 @@ pub fn run() {
 }
 #[cfg(test)]
 mod tests {
+    /// The values are baked in by build.rs, so a wiring mistake shows up as an
+    /// empty or placeholder string rather than a compile error.
+    #[test]
+    fn build_metadata_is_stamped_in() {
+        let number = env!("CIDERPRESS_BUILD_NUMBER");
+        assert!(
+            number.parse::<u64>().is_ok(),
+            "build number {:?} is not a number",
+            number
+        );
+
+        let short = env!("CIDERPRESS_COMMIT_SHORT");
+        let full = env!("CIDERPRESS_COMMIT_FULL");
+
+        // Building outside a git checkout is allowed and yields placeholders;
+        // only assert the real shape when git actually answered.
+        if full != "unknown" {
+            assert_eq!(full.len(), 40, "full hash {:?} is not a sha1", full);
+            assert_ne!(number, "0", "in a checkout the commit count cannot be 0");
+
+            // Catches the two hashes disagreeing, e.g. one going stale.
+            let base = short.trim_end_matches("-dirty");
+            assert!(
+                full.starts_with(base),
+                "short hash {:?} is not a prefix of full hash {:?}",
+                base,
+                full
+            );
+
+            // STALENESS CHECK, and the reason this test earns its keep. Cargo
+            // caches build script output, so without correct
+            // cargo:rerun-if-changed directives the stamped hash silently keeps
+            // reporting an old commit — which is worse than showing nothing,
+            // because bug reports then point at the wrong source. Comparing the
+            // baked-in value against live git makes that failure loud.
+            if let Ok(out) = std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir("..")
+                .output()
+            {
+                if out.status.success() {
+                    let live = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    assert_eq!(
+                        full, live,
+                        "stamped commit is stale — build.rs did not rerun when HEAD moved; \
+                         check the cargo:rerun-if-changed directives"
+                    );
+                }
+            }
+        }
+    }
+
     /// A normal launch must stay silent (VoiceMemoLiberator-nh9 deliberately
     /// made it so), while real problems still reach the terminal. An `info`
     /// default would undo that: `info!` is used liberally across the backend,

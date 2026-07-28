@@ -14,7 +14,55 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+/// Stamp the build with git provenance, exposed to the crate via `env!`.
+///
+/// The build number is the commit count rather than a stored counter: it is
+/// monotonic by construction, identical for anyone building the same commit, has
+/// no state file to drift or merge-conflict, and cannot be forgotten during a
+/// release — which matters because releases are built from a developer machine,
+/// so there is no build server to own the number.
+fn emit_build_metadata() {
+    // Without these, cargo caches this build script's output and the reported
+    // hash silently goes stale — a confidently wrong hash sends bug reports at
+    // the wrong source, which is worse than showing nothing.
+    let git_dir = std::path::Path::new("../.git");
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+    if let Ok(head) = std::fs::read_to_string(git_dir.join("HEAD")) {
+        // Detached HEAD has no ref to watch; on a branch, the ref file is what
+        // actually changes when a commit lands.
+        if let Some(reference) = head.strip_prefix("ref: ").map(str::trim) {
+            println!("cargo:rerun-if-changed=../.git/{}", reference);
+        }
+    }
+    println!("cargo:rerun-if-changed=../.git/index");
+
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").args(args).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    };
+
+    // A source tarball has no .git at all; degrade rather than fail the build.
+    let count = git(&["rev-list", "--count", "HEAD"]).unwrap_or_else(|| "0".into());
+    let short = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".into());
+    let full = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
+
+    // An unqualified hash asserts "this binary is exactly that commit", which is
+    // false for any build with uncommitted changes.
+    let dirty = git(&["status", "--porcelain"]).is_some();
+    let short = if dirty { format!("{}-dirty", short) } else { short };
+
+    println!("cargo:rustc-env=CIDERPRESS_BUILD_NUMBER={}", count);
+    println!("cargo:rustc-env=CIDERPRESS_COMMIT_SHORT={}", short);
+    println!("cargo:rustc-env=CIDERPRESS_COMMIT_FULL={}", full);
+}
+
 fn main() {
+  emit_build_metadata();
+
   // Set macOS deployment target to 11.0 for C++17 std::filesystem and Metal GPU support
   std::env::set_var("MACOSX_DEPLOYMENT_TARGET", "11.0");
   std::env::set_var("CMAKE_OSX_DEPLOYMENT_TARGET", "11.0");

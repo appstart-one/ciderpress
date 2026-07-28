@@ -157,6 +157,18 @@ pub struct TranscriptionEstimate {
     pub model: String,
 }
 
+/// Git provenance of the running build, stamped in at compile time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildInfo {
+    pub version: String,
+    /// Commit count at build time — monotonic, and identical for the same commit.
+    pub build_number: String,
+    /// Short hash, suffixed "-dirty" when built with uncommitted changes.
+    pub commit_short: String,
+    /// Full hash, for linking to the commit on GitHub.
+    pub commit_full: String,
+}
+
 /// Result of sweeping intermediate WAVs left in the audio directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrayWavCleanup {

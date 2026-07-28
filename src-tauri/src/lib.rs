@@ -2217,6 +2217,24 @@ mod tests {
                     );
                 }
             }
+
+            // The -dirty marker is deliberately NOT compared against the live
+            // working tree. It records the tree state at the last build-script
+            // run, and "the tree just became dirty" cannot be expressed as a
+            // cargo rerun trigger without watching every file in the repo — so
+            // in a dev loop the marker legitimately lags by one build. Asserting
+            // agreement here produced a failure that was the test's fault, not
+            // the code's. Release builds, the case that matters, run from a
+            // clean committed tree.
+            //
+            // What is worth pinning is the shape: exactly the base hash, or the
+            // base hash plus that one suffix and nothing else.
+            assert!(
+                short == base || short == format!("{}-dirty", base),
+                "unexpected commit_short form {:?} for base {:?}",
+                short,
+                base
+            );
         }
     }
 

@@ -35,6 +35,13 @@ fn emit_build_metadata() {
         }
     }
     println!("cargo:rerun-if-changed=../.git/index");
+    // Also refresh on source edits, so the -dirty marker tracks Rust changes.
+    // It still cannot be exact: the marker reflects the tree at the last
+    // build-script run, and "the tree became dirty" is not expressible as a
+    // rerun trigger without watching every file in the repo. Release builds are
+    // the case that matters and they build from a clean, committed tree.
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
 
     let git = |args: &[&str]| -> Option<String> {
         let out = std::process::Command::new("git").args(args).output().ok()?;

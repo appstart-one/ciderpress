@@ -23,6 +23,7 @@ import { notifications } from '@mantine/notifications';
 import { ThemeToggle } from './components/ThemeToggle';
 import { RoutedErrorBoundary } from './components/ErrorBoundary';
 import BuildStamp from './components/BuildStamp';
+import SuggestButton from './components/SuggestButton';
 import { LockScreen, useLockScreen } from './components/LockScreen';
 import Settings from './pages/Settings';
 import Migrate from './pages/Migrate';
@@ -142,6 +143,7 @@ function App() {
                 <Navigation />
               </div>
               <LockNowButton />
+              <SuggestButton />
               <BuildStamp />
             </div>
           </AppShell.Navbar>

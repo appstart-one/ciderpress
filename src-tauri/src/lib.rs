@@ -2021,13 +2021,23 @@ fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
 
-    // try_init rather than init: a second call (or a test that installed its
-    // own subscriber) must not abort the app over logging setup.
-    if let Err(e) = tracing_subscriber::fmt()
+    // set_global_default, NOT try_init(). try_init() additionally installs a
+    // log-crate bridge (LogTracer) that claims the global `log` logger, and
+    // tauri_plugin_log then panics with "attempted to set a logger after the
+    // logging system was already initialized". The plugin is registered only
+    // under debug_assertions, so that collision appears when running the app and
+    // never in tests or release builds.
+    //
+    // Setting the subscriber directly leaves the `log` global untouched: the
+    // plugin owns log-crate records, this owns tracing records.
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(true)
-        .try_init()
-    {
+        .finish();
+
+    // A second call (or a test that installed its own) must not abort the app
+    // over logging setup.
+    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
         eprintln!("Failed to install tracing subscriber: {}", e);
     }
 }

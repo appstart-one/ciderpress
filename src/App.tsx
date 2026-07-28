@@ -21,7 +21,7 @@ import { IconSettings, IconDownload, IconChartBar, IconDatabase, IconTags, IconN
 import { invoke } from '@tauri-apps/api/core';
 import { notifications } from '@mantine/notifications';
 import { ThemeToggle } from './components/ThemeToggle';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { RoutedErrorBoundary } from './components/ErrorBoundary';
 import { LockScreen, useLockScreen } from './components/LockScreen';
 import Settings from './pages/Settings';
 import Migrate from './pages/Migrate';
@@ -145,7 +145,7 @@ function App() {
           </AppShell.Navbar>
 
           <AppShell.Main>
-            <ErrorBoundary>
+            <RoutedErrorBoundary>
               <Routes>
                 <Route path="/" element={<Slices />} />
                 <Route path="/auto" element={<AutoTranscribe />} />
@@ -155,7 +155,7 @@ function App() {
                 <Route path="/labels" element={<LabelSettings />} />
                 <Route path="/notebook-lm" element={<NotebookLM />} />
               </Routes>
-            </ErrorBoundary>
+            </RoutedErrorBoundary>
           </AppShell.Main>
         </AppShell>
       </LockScreen>

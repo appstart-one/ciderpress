@@ -570,7 +570,10 @@ export default function Slices() {
       setSlices(data);
       try {
         const labelsMap = await invoke<Record<number, Label[]>>('get_slice_labels');
-        setSliceLabels(labelsMap);
+        // renderCellValue indexes into this object, so a null payload would
+        // throw during render rather than here. The real command cannot return
+        // null, so this is insurance, not a fix for a live bug.
+        setSliceLabels(labelsMap ?? {});
       } catch (labelError) {
         console.error('Failed to load slice labels:', labelError);
       }

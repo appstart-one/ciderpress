@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { Component, ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Alert, Stack, Button, Code, Text } from '@mantine/core';
 
 interface Props {
@@ -61,4 +62,24 @@ export class ErrorBoundary extends Component<Props, State> {
 
     return this.props.children;
   }
+}
+
+/**
+ * An ErrorBoundary that forgets its error when the route changes.
+ *
+ * A class boundary has no way to clear `hasError` on its own: once
+ * getDerivedStateFromError fires, the same instance keeps rendering the
+ * fallback for whatever is passed as children. With one boundary wrapping the
+ * whole <Routes> block, React keeps that instance across navigation, so a
+ * single failing page made every other page show the same stack trace. One
+ * broken screen looked like a broken app, which is worse than the original
+ * error — it hides which page is actually at fault.
+ *
+ * Keying on pathname remounts the boundary with fresh state when the user
+ * navigates, and deliberately does NOT remount when the path is unchanged, so
+ * "Try Again" still recovers the current route in place.
+ */
+export function RoutedErrorBoundary({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
 }
